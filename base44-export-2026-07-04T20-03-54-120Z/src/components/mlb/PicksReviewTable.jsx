@@ -1,20 +1,31 @@
 import React from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { multiSort } from "@/lib/utils/array";
+import { getMarketLabel } from "@/lib/constants/markets";
 
-const MARKET_LABEL = {
-  hit_1: "1+ Hit",
-  hit_2: "2+ Hits",
-  hrr: "HRR",
-  total_bases: "Total Bases",
-  home_run: "Home Run",
-  strikeouts: "Strikeouts",
-};
-
+/**
+ * PicksReviewTable Component
+ * 
+ * Displays graded historical picks with results and accuracy metrics.
+ * 
+ * Features:
+ * - Sorted by player name (ascending) for easy scanning
+ * - Shows confidence level and outcome badge
+ * - Allows historical accuracy analysis
+ */
 export default function PicksReviewTable({ picks }) {
   if (!picks || picks.length === 0) {
     return <div className="py-8 text-center text-sm text-muted-foreground">No graded picks yet.</div>;
   }
+
+  /**
+   * Sort picks by player name in ascending order
+   * Provides consistent, scannable display for reviewing historical accuracy
+   */
+  const sortedPicks = multiSort(picks, [
+    { field: "player_name", direction: "asc" },
+  ]);
 
   return (
     <Table>
@@ -28,11 +39,11 @@ export default function PicksReviewTable({ picks }) {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {picks.map((p) => (
+        {sortedPicks.map((p) => (
           <TableRow key={p.id}>
             <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{p.game_date}</TableCell>
             <TableCell className="font-medium">{p.player_name}</TableCell>
-            <TableCell>{MARKET_LABEL[p.market] ?? p.market}</TableCell>
+            <TableCell>{getMarketLabel(p.market, "full")}</TableCell>
             <TableCell className="text-right tabular-nums">{p.confidence != null ? Math.round(p.confidence) : "—"}</TableCell>
             <TableCell className="text-right">
               {p.hit ? (
