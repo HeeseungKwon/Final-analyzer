@@ -1,0 +1,49 @@
+{
+  "name": "Game",
+  "type": "object",
+  "properties": {
+    "game_pk": {
+      "type": "number"
+    },
+    "game_date": {
+      "type": "string"
+    },
+    "game_time_utc": {
+      "type": "string"
+    },
+    "home_team_id": {
+      "type": "number"
+    },
+    "home_team_name": {
+      "type": "string"
+    },
+    "away_team_id": {
+      "type": "number"
+    },
+    "away_team_name": {
+      "type": "string"
+    },
+    "venue_name": {
+      "type": "string"
+    },
+    "home_probable_pitcher_id": {
+      "type": "number"
+    },
+    "home_probable_pitcher_name": {
+      "type": "string"
+    },
+    "away_probable_pitcher_id": {
+      "type": "number"
+    },
+    "away_probable_pitcher_name": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "game_pk",
+    "game_date"
+  ]
+}

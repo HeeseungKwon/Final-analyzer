@@ -1,0 +1,24 @@
+{
+  "name": "MarketAccuracy",
+  "type": "object",
+  "properties": {
+    "market": {
+      "type": "string"
+    },
+    "confidence_bucket": {
+      "type": "number"
+    },
+    "n_predictions": {
+      "type": "number"
+    },
+    "n_hits": {
+      "type": "number"
+    },
+    "hit_rate": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "market"
+  ]
+}

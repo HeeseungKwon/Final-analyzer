@@ -1,0 +1,90 @@
+{
+  "name": "Prediction",
+  "type": "object",
+  "properties": {
+    "game_pk": {
+      "type": "number"
+    },
+    "game_date": {
+      "type": "string"
+    },
+    "player_id": {
+      "type": "number"
+    },
+    "player_name": {
+      "type": "string"
+    },
+    "player_type": {
+      "type": "string",
+      "enum": [
+        "hitter",
+        "pitcher"
+      ]
+    },
+    "market": {
+      "type": "string",
+      "enum": [
+        "hit_1",
+        "hit_2",
+        "hrr",
+        "total_bases",
+        "home_run",
+        "strikeouts"
+      ]
+    },
+    "confidence": {
+      "type": "number"
+    },
+    "projection": {
+      "type": "number"
+    },
+    "floor": {
+      "type": "number"
+    },
+    "ceiling": {
+      "type": "number"
+    },
+    "trigger_text": {
+      "type": "string"
+    },
+    "trigger_strength": {
+      "type": "number"
+    },
+    "features": {
+      "type": "string"
+    },
+    "data_quality": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "partial",
+        "missing"
+      ]
+    },
+    "recommended": {
+      "type": "boolean"
+    },
+    "rec_score": {
+      "type": "number"
+    },
+    "verdict": {
+      "type": "string"
+    },
+    "verdict_note": {
+      "type": "string"
+    },
+    "graded": {
+      "type": "boolean",
+      "default": false
+    },
+    "hit": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "game_pk",
+    "game_date",
+    "player_name",
+    "market"
+  ]
+}

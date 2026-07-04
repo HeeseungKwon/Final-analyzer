@@ -1,0 +1,22 @@
+{
+  "name": "ExcludedPlayer",
+  "type": "object",
+  "properties": {
+    "game_date": {
+      "type": "string"
+    },
+    "player_id": {
+      "type": "number"
+    },
+    "player_name": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "game_date",
+    "reason"
+  ]
+}
