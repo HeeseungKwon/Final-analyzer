@@ -1,0 +1,19 @@
+# Node
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Base44 local link metadata
+base44-export-2026-07-04T20-03-54-120Z/base44/.app.jsonc

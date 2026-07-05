@@ -30,9 +30,20 @@ export default function Parlays() {
   const { data, isLoading } = useQuery({
     queryKey: ["parlays", date],
     queryFn: async () => {
-      const predictions = await db.entities.Prediction.filter({ game_date: date });
-      const parlays = buildParlays(predictions);
-      const hrParlays = buildHRParlays(predictions);
+      const [games, predictions] = await Promise.all([
+        db.entities.Game.filter({ game_date: date }),
+        db.entities.Prediction.filter({ game_date: date }),
+      ]);
+
+      const gameTimeByPk = new Map(games.map((g) => [g.game_pk, g.game_time_utc ?? null]));
+
+      const eligiblePredictions = predictions.map((p) => ({
+        ...p,
+        game_time_utc: gameTimeByPk.get(p.game_pk) ?? null,
+      }));
+
+      const parlays = buildParlays(eligiblePredictions);
+      const hrParlays = buildHRParlays(eligiblePredictions);
       return { parlays, hrParlays, note: parlays.length === 0 ? "No parlays available. Run today's analysis on the Today page first." : "Parlays are algorithmic suggestions from your own model — not betting advice. All legs must hit for a parlay to win." };
     },
   });
@@ -47,7 +58,7 @@ export default function Parlays() {
           <div className="text-xs uppercase tracking-widest text-muted-foreground">Portfolio</div>
           <h1 className="text-3xl font-black tracking-tight">Daily parlays</h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Five 4-6 leg parlays built from today's projections. Each uses a different strategy — safety, balance, pitcher lean, slugger stack, high-leverage — and diversifies across games and players (max 1 leg per player, max 2 per game). Every leg has a modeled hit probability; the combined product plus break-even at typical -120 juice tells you the edge.
+            Time-windowed parlays built from today's projections. If morning games exist, each time window gets 3 parlays: two 4-legs and one 6-leg. HR parlays follow the same windows with one 2-leg and one 3-leg recommendation.
           </p>
         </div>
         <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-40" />
@@ -105,7 +116,12 @@ export default function Parlays() {
                     <TableBody>
                       {p.legs.map((l) => (
                         <TableRow key={l.predictionId}>
-                          <TableCell className="font-medium">{l.player}</TableCell>
+                          <TableCell className="font-medium">
+                            {l.player}
+                            {l.teamName && (
+                              <span className="ml-2 text-xs font-normal text-muted-foreground">({l.teamName})</span>
+                            )}
+                          </TableCell>
                           <TableCell>{MARKET_SHORT[l.market] ?? l.market}</TableCell>
                           <TableCell className="text-right tabular-nums">{(l.legProb * 100).toFixed(1)}%</TableCell>
                           <TableCell className="text-right tabular-nums">{Number(l.confidence).toFixed(0)}</TableCell>
@@ -175,7 +191,12 @@ export default function Parlays() {
                         <TableBody>
                           {p.legs.map((l) => (
                             <TableRow key={l.predictionId}>
-                              <TableCell className="font-medium">{l.player}</TableCell>
+                              <TableCell className="font-medium">
+                                {l.player}
+                                {l.teamName && (
+                                  <span className="ml-2 text-xs font-normal text-muted-foreground">({l.teamName})</span>
+                                )}
+                              </TableCell>
                               <TableCell className="text-right tabular-nums">{(l.legProb * 100).toFixed(1)}%</TableCell>
                               <TableCell className="text-right tabular-nums">{Number(l.confidence).toFixed(0)}</TableCell>
                               <TableCell className="text-xs text-muted-foreground">{l.reason}</TableCell>

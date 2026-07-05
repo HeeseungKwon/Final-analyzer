@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Redirecting...</title>
+    <script>
+      // Redirect deep links back to index.html for BrowserRouter on GitHub Pages.
+      (function () {
+        var l = window.location;
+        var redirectTarget = l.origin + l.pathname + l.search + l.hash;
+        sessionStorage.redirect = redirectTarget;
+        var segments = l.pathname.split("/").filter(Boolean);
+        var repoBase = segments.length > 0 ? "/" + segments[0] + "/" : "/";
+        window.location.replace(l.origin + repoBase);
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>

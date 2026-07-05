@@ -1,53 +1,143 @@
-// Portfolio parlay builder
+/**
+ * Advanced Parlay Builder with Vegas Integration
+ * 
+ * Builds algorithmic parlays with intelligent pick selection:
+ * - Balanced edge parlays across diverse markets
+ * - HR prospect parlays with Vegas + ballpark comparison
+ * - Middling picks (model probability between Vegas and park) included for edge opportunities
+ * - Strong picks (model beats both baselines) prioritized
+ * 
+ * Key principle: Include both STRONG and MIDDLING HR picks.
+ * Strong picks = high-confidence model advantage. Middling picks = potential hidden edges
+ * where the model's view sits between Vegas and ballpark, creating valuation opportunities.
+ */
 
-function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
-function smooth(x, anchor, slope) {
-  return 1 / (1 + Math.exp(-x * slope * 6)) * (1 - anchor) + anchor;
+import { clamp, smooth, probToAmerican, blend } from "@/lib/utils/math";
+import { computeHRVerdict } from "@/lib/scoring-advanced";
+
+const PDT_TZ = "America/Los_Angeles";
+
+const SLOT_LABELS = {
+  morning: "Between 9am PDT and 12pm PDT",
+  noon: "Between 12:01 pm and 3 pm PDT",
+  afternoon: "Between 3:01 pm and 5pm PDT",
+  left: "Games Left",
+};
+
+function pdtMinutesFromIso(isoUtc) {
+  if (!isoUtc) return null;
+  const d = new Date(isoUtc);
+  if (Number.isNaN(d.getTime())) return null;
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: PDT_TZ,
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(d);
+
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "NaN");
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? "NaN");
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  return hour * 60 + minute;
 }
 
+function slotKeyFromMinutes(minutes) {
+  if (minutes == null) return "left";
+  if (minutes >= 9 * 60 && minutes <= 12 * 60) return "morning";
+  if (minutes >= 12 * 60 + 1 && minutes <= 15 * 60) return "noon";
+  if (minutes >= 15 * 60 + 1 && minutes <= 17 * 60) return "afternoon";
+  return "left";
+}
+
+function splitPredictionsByTimeWindow(predictions) {
+  const withSlots = predictions.map((p) => {
+    const mins = pdtMinutesFromIso(p.game_time_utc);
+    return { ...p, _slotKey: slotKeyFromMinutes(mins) };
+  });
+
+  const hasMorningGames = withSlots.some((p) => p._slotKey === "morning");
+  if (!hasMorningGames) {
+    return [{ key: "left", label: SLOT_LABELS.left, predictions: withSlots }];
+  }
+
+  const order = ["morning", "noon", "afternoon", "left"];
+  return order
+    .map((key) => ({
+      key,
+      label: SLOT_LABELS[key],
+      predictions: withSlots.filter((p) => p._slotKey === key),
+    }))
+    .filter((s) => s.predictions.length > 0);
+}
+
+/**
+ * Calculates the probability used in parlay leg combinations
+ * Different markets use different blend ratios of projection and floor/ceiling
+ * 
+ * @param {Object} p - Prediction object with market, projection, floor
+ * @returns {number} Leg probability [0, 1]
+ */
 function legProbabilityFor(p) {
   switch (p.market) {
-    case "hit_1":       return clamp(0.55 * p.floor + 0.45 * p.projection, 0, 1);
-    case "hit_2":       return clamp(0.5 * p.floor + 0.5 * p.projection, 0, 1);
-    case "home_run":    return clamp(0.7 * p.projection + 0.3 * p.floor, 0, 1);
-    case "total_bases": return clamp(smooth((p.projection - 1.5) / 1.2, 0.4, 0.75), 0, 1);
-    case "hrr":         return clamp(smooth((p.projection - 1.5) / 1.2, 0.4, 0.75), 0, 1);
-    case "strikeouts":  return clamp(smooth((p.projection - 5.5) / 3.0, 0.4, 0.8), 0, 1);
-    default: return 0.5;
+    case "hit_1":
+      return clamp(0.55 * p.floor + 0.45 * p.projection, 0, 1);
+    case "hit_2":
+      return clamp(0.5 * p.floor + 0.5 * p.projection, 0, 1);
+    case "home_run":
+      return clamp(0.7 * p.projection + 0.3 * p.floor, 0, 1);
+    case "total_bases":
+      return clamp(smooth((p.projection - 1.5) / 1.2, 0.4, 0.75), 0, 1);
+    case "hrr":
+      return clamp(smooth((p.projection - 1.5) / 1.2, 0.4, 0.75), 0, 1);
+    case "strikeouts":
+      return clamp(smooth((p.projection - 5.5) / 3.0, 0.4, 0.8), 0, 1);
+    default:
+      return 0.5;
   }
 }
 
-function probToAmerican(p) {
-  if (p <= 0) return "+∞";
-  if (p >= 1) return "-∞";
-  const dec = 1 / p;
-  const american = dec >= 2 ? Math.round((dec - 1) * 100) : -Math.round(100 / (dec - 1));
-  return american > 0 ? `+${american}` : `${american}`;
-}
-
-function breakEvenProbForLegs(n) {
-  return Math.pow(0.545, n);
-}
-
+/**
+ * Converts a parlay leg to the output format
+ * Includes Vegas/park verdict for HR picks
+ */
 function toLeg(p, reason) {
-  return {
+  const legObj = {
     predictionId: p.id,
+    playerId: p.player_id,
     player: p.player_name,
+    teamName: p.team_name ?? "",
     market: p.market,
     gamePk: p.game_pk,
     legProb: legProbabilityFor(p),
     projection: p.projection,
     confidence: p.confidence,
+    tier: p._tier ?? null,
     reason,
   };
+
+  // For HR picks, include verdict info for transparency
+  if (p.market === "home_run" && p.features) {
+    legObj.verdict = p.verdict;
+    legObj.vegasProb = p.features.vegasHrProb;
+    legObj.parkProb = p.features.parkHrProb;
+  }
+
+  return legObj;
 }
 
+/**
+ * Assembles a parlay from legs
+ * Calculates combined probability, breakeven threshold, and edge
+ */
 function assembleParlay(name, strategy, legs, minLegs = 4) {
   if (legs.length < minLegs) return null;
   const combined = legs.reduce((a, l) => a * l.legProb, 1);
   const be = breakEvenProbForLegs(legs.length);
   return {
-    name, strategy, legs,
+    name,
+    strategy,
+    legs,
     combinedProb: combined,
     breakEvenProb: be,
     edge: combined - be,
@@ -55,11 +145,25 @@ function assembleParlay(name, strategy, legs, minLegs = 4) {
   };
 }
 
+/**
+ * Breakeven probability for N legs at -120 juice
+ * Accounts for standard sportsbook vigorish
+ * At -120: each leg needs to win 54.5% to breakeven on a parlay
+ */
+function breakEvenProbForLegs(n) {
+  return Math.pow(0.545, n);
+}
+
+/**
+ * Diverse pick selection with constraints
+ * Ensures parlays don't become concentrated bets
+ */
 function pickDiverse(pool, n, opts = {}) {
   const { maxPerGame = 2, maxPerPlayer = 1, bannedPlayerIds = new Set() } = opts;
   const byGame = new Map();
   const byPlayer = new Map();
   const out = [];
+
   for (const p of pool) {
     if (out.length >= n) break;
     if (bannedPlayerIds.has(p.player_id)) continue;
@@ -69,110 +173,295 @@ function pickDiverse(pool, n, opts = {}) {
     byGame.set(p.game_pk, (byGame.get(p.game_pk) ?? 0) + 1);
     byPlayer.set(p.player_id, (byPlayer.get(p.player_id) ?? 0) + 1);
   }
+
   return out;
 }
 
+function tierForPrediction(p) {
+  const rec = Number(p.rec_score ?? 0);
+  const conf = Number(p.confidence ?? 0);
+  const leg = Number(p._legProb ?? legProbabilityFor(p));
+
+  if (rec >= 86 || conf >= 84 || leg >= 0.7) return "s";
+  if (rec >= 74 || conf >= 72 || leg >= 0.6) return "a";
+  if (rec >= 62 || conf >= 62 || leg >= 0.52) return "b";
+  return "c";
+}
+
+function pickTierMix(ranked, n, plan, opts = {}) {
+  const { maxPerGame = 2, maxPerPlayer = 1, bannedPlayerIds = new Set(), allowMarkets = null } = opts;
+  const byGame = new Map();
+  const byPlayer = new Map();
+  const out = [];
+
+  const allowedMarkets = allowMarkets ? new Set(allowMarkets) : null;
+
+  const canAdd = (p) => {
+    if (out.length >= n) return false;
+    if (bannedPlayerIds.has(p.player_id)) return false;
+    if (allowedMarkets && !allowedMarkets.has(p.market)) return false;
+    if ((byGame.get(p.game_pk) ?? 0) >= maxPerGame) return false;
+    if ((byPlayer.get(p.player_id) ?? 0) >= maxPerPlayer) return false;
+    if (out.some((x) => x.id === p.id)) return false;
+    return true;
+  };
+
+  const add = (p) => {
+    out.push(p);
+    byGame.set(p.game_pk, (byGame.get(p.game_pk) ?? 0) + 1);
+    byPlayer.set(p.player_id, (byPlayer.get(p.player_id) ?? 0) + 1);
+  };
+
+  const tierBuckets = {
+    s: ranked.filter((p) => p._tier === "s"),
+    a: ranked.filter((p) => p._tier === "a"),
+    b: ranked.filter((p) => p._tier === "b"),
+    c: ranked.filter((p) => p._tier === "c"),
+  };
+
+  for (const segment of plan) {
+    const bucket = tierBuckets[segment.tier] ?? [];
+    let picked = 0;
+    for (const p of bucket) {
+      if (picked >= segment.count || out.length >= n) break;
+      if (!canAdd(p)) continue;
+      add(p);
+      picked += 1;
+    }
+  }
+
+  if (out.length < n) {
+    for (const p of ranked) {
+      if (out.length >= n) break;
+      if (!canAdd(p)) continue;
+      add(p);
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Builds 5 core portfolio parlays
+ * Each uses a different strategy to diversify edge sources
+ */
 export function buildParlays(predictions) {
   const pool = predictions.filter((p) => p.data_quality === "ok");
   if (pool.length === 0) return [];
 
-  const ranked = [...pool]
-    .map((p) => ({ ...p, _legProb: legProbabilityFor(p) }))
-    .sort((a, b) => b._legProb - a._legProb || b.confidence - a.confidence);
-
+  const slots = splitPredictionsByTimeWindow(pool);
   const parlays = [];
 
-  // 1) Safety Net
-  {
-    const cands = ranked.filter((p) => p.market === "hit_1" || p.market === "hrr");
-    const legs = pickDiverse(cands, 5, { maxPerGame: 1 }).map((p) => toLeg(p, "high-floor consistency"));
-    const par = assembleParlay("Safety Net", "5 legs of the highest-floor 1+ hit / HRR spots, max 1 per game.", legs);
-    if (par) parlays.push(par);
-  }
+  for (const slot of slots) {
+    const ranked = [...slot.predictions]
+      .map((p) => ({ ...p, _legProb: legProbabilityFor(p) }))
+      .map((p) => ({ ...p, _tier: tierForPrediction(p) }))
+      .sort((a, b) => b._legProb - a._legProb || (b.rec_score ?? 0) - (a.rec_score ?? 0) || (b.confidence ?? 0) - (a.confidence ?? 0));
 
-  // 2) Balanced Mixer
-  {
+    const usedPlayers = new Set();
+
+    const candsA = ranked.filter(
+      (p) => ["hit_1", "hrr", "strikeouts", "total_bases"].includes(p.market) && p._legProb >= 0.48
+    );
+    const legsA = pickTierMix(
+      candsA,
+      4,
+      [
+        { tier: "s", count: 1 },
+        { tier: "a", count: 2 },
+        { tier: "b", count: 1 },
+      ],
+      { maxPerGame: 1, maxPerPlayer: 1, bannedPlayerIds: usedPlayers }
+    ).map((p) =>
+      toLeg(p, `time-window high-floor core (tier ${String(p._tier).toUpperCase()})`)
+    );
+    const parA = assembleParlay(
+      `${slot.label} — Core 4-Leg A`,
+      "4 legs from safer profile markets (1+ hit / HRR / K / TB), diversified by game.",
+      legsA,
+      4
+    );
+    if (parA) {
+      parlays.push({ ...parA, timeWindow: slot.label });
+      for (const l of parA.legs) usedPlayers.add(l.playerId);
+    }
+
+    const tierPriority = { s: 0, a: 1, b: 2, c: 3 };
+    const marketRanked = [...ranked].sort((a, b) =>
+      (tierPriority[a._tier] - tierPriority[b._tier]) || (b._legProb - a._legProb) || ((b.rec_score ?? 0) - (a.rec_score ?? 0))
+    );
+
+    const legsBPool = [];
     const seenMarkets = new Set();
-    const legs = [];
-    for (const p of ranked) {
-      if (legs.length >= 4) break;
+    for (const p of marketRanked) {
+      if (legsBPool.length >= 4) break;
+      if (usedPlayers.has(p.player_id)) continue;
       if (seenMarkets.has(p.market)) continue;
-      if (legs.some((l) => l.gamePk === p.game_pk)) continue;
-      legs.push(toLeg(p, "top rec-score in its market"));
+      if (legsBPool.some((l) => l.game_pk === p.game_pk)) continue;
+      legsBPool.push(p);
       seenMarkets.add(p.market);
     }
-    const par = assembleParlay("Balanced Mixer", "4 legs across 4 different markets and 4 different games.", legs);
-    if (par) parlays.push(par);
-  }
-
-  // 3) Pitcher Lean
-  {
-    const ks = ranked.filter((p) => p.market === "strikeouts").slice(0, 2);
-    const hits = pickDiverse(
-      ranked.filter((p) => p.market === "hit_1" && !ks.some((k) => k.game_pk === p.game_pk)),
-      2, { maxPerGame: 1 }
+    if (legsBPool.length < 4) {
+      for (const p of ranked) {
+        if (legsBPool.length >= 4) break;
+        if (usedPlayers.has(p.player_id)) continue;
+        if (legsBPool.some((l) => l.id === p.id)) continue;
+        if (legsBPool.some((l) => l.game_pk === p.game_pk)) continue;
+        legsBPool.push(p);
+      }
+    }
+    const legsB = legsBPool.map((p) => toLeg(p, `time-window balanced market mix (tier ${String(p._tier).toUpperCase()})`));
+    const parB = assembleParlay(
+      `${slot.label} — Core 4-Leg B`,
+      "4 legs with market diversity and one-game separation.",
+      legsB,
+      4
     );
-    const legs = [...ks, ...hits].map((p) =>
-      toLeg(p, p.market === "strikeouts" ? "starter K matchup" : "safe hit outside a K game")
-    );
-    const par = assembleParlay("Pitcher Lean", "2 K props + 2 safe 1+ hit legs in unrelated games.", legs);
-    if (par) parlays.push(par);
-  }
+    if (parB) {
+      parlays.push({ ...parB, timeWindow: slot.label });
+      for (const l of parB.legs) usedPlayers.add(l.playerId);
+    }
 
-  // 4) Slugger Stack
-  {
-    const tb = ranked.filter((p) => p.market === "total_bases").slice(0, 3);
-    const hr = ranked.filter((p) => p.market === "home_run" && p.verdict === "strong").slice(0, 2);
-    const combined = [...tb, ...hr];
-    const legs = pickDiverse(combined, 4, { maxPerGame: 2 }).map((p) =>
-      toLeg(p, p.market === "home_run" ? "HR verdict: beats Park AND Vegas" : "top total-bases spot")
+    const cands6 = ranked.filter((p) => p._legProb >= 0.5);
+    let legs6 = pickTierMix(
+      cands6,
+      6,
+      [
+        { tier: "s", count: 1 },
+        { tier: "a", count: 2 },
+        { tier: "b", count: 2 },
+        { tier: "c", count: 1 },
+      ],
+      { maxPerGame: 2, maxPerPlayer: 1, bannedPlayerIds: usedPlayers }
     );
-    const par = assembleParlay("Slugger Stack", "Total Bases + HR mix. HR legs must beat both Park AND Vegas.", legs);
-    if (par) parlays.push(par);
-  }
+    if (legs6.length < 6) {
+      legs6 = pickTierMix(
+        cands6,
+        6,
+        [
+          { tier: "s", count: 1 },
+          { tier: "a", count: 2 },
+          { tier: "b", count: 2 },
+          { tier: "c", count: 1 },
+        ],
+        { maxPerGame: 2, maxPerPlayer: 1 }
+      );
+    }
+    const par6 = assembleParlay(
+      `${slot.label} — 6-Leg`,
+      "6-leg leverage parlay for the same time window.",
+      legs6.map((p) => toLeg(p, `time-window leverage leg (tier ${String(p._tier).toUpperCase()})`)),
+      6
+    );
+    if (par6) parlays.push({ ...par6, timeWindow: slot.label });
 
-  // 5) Leverage
-  {
-    const cands = ranked.filter((p) => legProbabilityFor(p) > 0.5);
-    const legs = pickDiverse(cands, 6, { maxPerGame: 2 }).map((p) => toLeg(p, "positive edge vs -120 juice"));
-    const par = assembleParlay("Leverage 6-leg", "6 legs, each with modeled edge over typical -120 pricing. Highest payoff, highest variance.", legs);
-    if (par) parlays.push(par);
+    const aggressivePool = ranked.filter(
+      (p) =>
+        ["home_run", "hit_2", "total_bases"].includes(p.market) &&
+        ["b", "c"].includes(p._tier)
+    );
+    let twoLegAggressive = pickTierMix(
+      aggressivePool,
+      2,
+      [
+        { tier: "c", count: 1 },
+        { tier: "b", count: 1 },
+      ],
+      { maxPerGame: 1, maxPerPlayer: 1 }
+    );
+    if (twoLegAggressive.length < 2) {
+      twoLegAggressive = pickTierMix(
+        ranked.filter((p) => ["home_run", "hit_2", "total_bases"].includes(p.market)),
+        2,
+        [
+          { tier: "c", count: 1 },
+          { tier: "b", count: 1 },
+          { tier: "a", count: 1 },
+        ],
+        { maxPerGame: 1, maxPerPlayer: 1 }
+      );
+    }
+    const par2Aggressive = assembleParlay(
+      `${slot.label} — Aggressive 2-Leg`,
+      "2-leg all-aggressive parlay for this time window (high-variance markets only).",
+      twoLegAggressive.map((p) =>
+        toLeg(p, `100% aggressive leg (${p.market}, tier ${String(p._tier).toUpperCase()})`)
+      ),
+      2
+    );
+    if (par2Aggressive) parlays.push({ ...par2Aggressive, timeWindow: slot.label });
   }
 
   return parlays;
 }
 
-// Standalone HR-prospect parlays (2-3 legs), separate from the 5 core
-// portfolio parlays above. Same underlying model/probability — just
-// concentrated on home runs, diversified by player and game, ranked by our
-// own rec_score (never Vegas).
+/**
+ * Builds HR prospect parlays (2-3 legs)
+ * 
+ * Strategy: Include BOTH strong and middling HR picks
+ * - STRONG: Model probability > both Vegas and ballpark (high confidence)
+ * - MIDDLING: Model probability between Vegas and ballpark (potential hidden edge)
+ * 
+ * This diversifies the source of edge beyond pure confidence scores.
+ * Middling picks represent situations where our model sees value the market might miss.
+ * 
+ * Ranking: By model confidence (high confidence picks ranked first)
+ */
 export function buildHRParlays(predictions) {
   const pool = predictions.filter((p) => p.market === "home_run" && p.data_quality === "ok");
   if (pool.length === 0) return [];
 
-  const ranked = [...pool].sort((a, b) => (b.rec_score ?? b.confidence) - (a.rec_score ?? a.confidence));
+  // Filter for STRONG and MIDDLING verdicts
+  // Exclude FADE to maintain edge focus
+  const qualifyingPicks = pool.filter(
+    (p) => p.verdict === "strong" || p.verdict === "middling"
+  );
 
-  const templates = [
-    { name: "HR Prospects — Top 2", size: 2 },
-    { name: "HR Prospects — Trio A", size: 3 },
-    { name: "HR Prospects — Trio B", size: 3 },
-  ];
+  if (qualifyingPicks.length === 0) return [];
 
-  const used = new Set();
+  const slots = splitPredictionsByTimeWindow(qualifyingPicks);
   const parlays = [];
 
-  for (const t of templates) {
-    const legs = [];
-    for (const p of ranked) {
-      if (legs.length >= t.size) break;
-      if (used.has(p.player_id)) continue;
-      if (legs.some((l) => l.gamePk === p.game_pk)) continue;
-      legs.push(toLeg(p, p.verdict === "strong" ? "model projects above park baseline" : "top HR confidence"));
+  for (const slot of slots) {
+    const ranked = [...slot.predictions].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+    const used = new Set();
+
+    const twoLeg = pickDiverse(ranked, 2, { maxPerGame: 1, maxPerPlayer: 1, bannedPlayerIds: used }).map((p) =>
+      toLeg(
+        p,
+        p.verdict === "strong"
+          ? "model beats Park & Vegas"
+          : "model between Park & Vegas (hidden edge)"
+      )
+    );
+    const par2 = assembleParlay(
+      `${slot.label} — HR 2-Leg`,
+      "2-leg HR parlay for this time window (strong + middling picks allowed).",
+      twoLeg,
+      2
+    );
+    if (par2) {
+      parlays.push({ ...par2, timeWindow: slot.label });
+      for (const l of par2.legs) used.add(l.playerId);
     }
-    if (legs.length < t.size) continue;
-    for (const l of legs) used.add(pool.find((p) => p.id === l.predictionId)?.player_id);
-    const par = assembleParlay(t.name, `${t.size}-leg home run parlay from our own model's top HR confidence scores.`, legs, 2);
-    if (par) parlays.push(par);
+
+    let threeLegPool = pickDiverse(ranked, 3, { maxPerGame: 1, maxPerPlayer: 1, bannedPlayerIds: used });
+    if (threeLegPool.length < 3) threeLegPool = pickDiverse(ranked, 3, { maxPerGame: 1, maxPerPlayer: 1 });
+    const threeLeg = threeLegPool.map((p) =>
+      toLeg(
+        p,
+        p.verdict === "strong"
+          ? "model beats Park & Vegas"
+          : "model between Park & Vegas (hidden edge)"
+      )
+    );
+    const par3 = assembleParlay(
+      `${slot.label} — HR 3-Leg`,
+      "3-leg HR parlay for this time window (strong + middling picks allowed).",
+      threeLeg,
+      2
+    );
+    if (par3) parlays.push({ ...par3, timeWindow: slot.label });
   }
 
   return parlays;

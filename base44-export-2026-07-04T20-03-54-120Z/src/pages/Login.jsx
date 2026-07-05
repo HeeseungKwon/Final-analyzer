@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label";
 import { LogIn, Mail, Lock, Loader2 } from "lucide-react";
 import AuthLayout from "@/components/AuthLayout";
 import GoogleIcon from "@/components/GoogleIcon";
+import { appParams } from "@/lib/app-params";
+import { toast } from "@/components/ui/use-toast";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -31,6 +33,15 @@ export default function Login() {
   };
 
   const handleGoogle = () => {
+    if (!appParams.appBaseUrl) {
+      toast({
+        title: "Google login is not configured",
+        description: "Set VITE_BASE44_APP_BASE_URL or run the app with base44 dev.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     db.auth.loginWithProvider("google", "/");
   };
 

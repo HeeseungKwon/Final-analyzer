@@ -14,6 +14,7 @@ export const AuthProvider = ({ children }) => {
   const [authError, setAuthError] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [appPublicSettings, setAppPublicSettings] = useState(null); // Contains only { id, public_settings }
+  const isLocalNoAuthMode = !appParams.appBaseUrl;
 
   useEffect(() => {
     checkAppState();
@@ -23,20 +24,52 @@ export const AuthProvider = ({ children }) => {
     try {
       setIsLoadingPublicSettings(true);
       setAuthError(null);
+
+      if (isLocalNoAuthMode) {
+        // Local GitHub mode: skip remote auth/app-state checks and allow app usage.
+        setAppPublicSettings(null);
+        setUser(null);
+        setIsAuthenticated(true);
+        setAuthChecked(true);
+        setIsLoadingPublicSettings(false);
+        setIsLoadingAuth(false);
+        return;
+      }
+
+      if (!appParams.appId) {
+        setAuthError({
+          type: 'config_missing',
+          message: 'Missing Base44 app id. Set app_id query param or VITE_BASE44_APP_ID.',
+        });
+        setIsLoadingPublicSettings(false);
+        setIsLoadingAuth(false);
+        return;
+      }
       
       // First, check app public settings (with token if available)
       // This will tell us if auth is required, user not registered, etc.
-      const appClient = createAxiosClient({
-        baseURL: `/api/apps/public`,
-        headers: {
-          'X-App-Id': appParams.appId
-        },
-        token: appParams.token, // Include token if available
-        interceptResponses: true
-      });
-      
+
       try {
-        const publicSettings = await appClient.get(`/prod/public-settings/by-id/${appParams.appId}`);
+        const headers = {
+          'X-App-Id': appParams.appId,
+          ...(appParams.token ? { Authorization: `Bearer ${appParams.token}` } : {}),
+        };
+
+        const response = await fetch(`/api/apps/public/prod/public-settings/by-id/${appParams.appId}`, {
+          method: 'GET',
+          headers,
+        });
+
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw {
+            status: response.status,
+            data: payload,
+            message: payload?.message || `Failed to load app settings (${response.status})`,
+          };
+        }
+
+        const publicSettings = payload?.data ?? payload;
         setAppPublicSettings(publicSettings);
         
         // If we got the app public settings successfully, check if user is authenticated
@@ -129,7 +162,12 @@ export const AuthProvider = ({ children }) => {
   };
 
   const navigateToLogin = () => {
-    // Use the SDK's redirectToLogin method
+    // In local no-auth mode, never redirect to login.
+    if (isLocalNoAuthMode) {
+      return;
+    }
+
+    // Use the SDK's redirectToLogin method when Base44 login is configured.
     db.auth.redirectToLogin(window.location.href);
   };
 

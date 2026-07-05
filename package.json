@@ -1,0 +1,12 @@
+{
+  "name": "final-analyzer-root",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix base44-export-2026-07-04T20-03-54-120Z run dev",
+    "dev:base44": "npm --prefix base44-export-2026-07-04T20-03-54-120Z run dev:base44",
+    "build": "npm --prefix base44-export-2026-07-04T20-03-54-120Z run build",
+    "lint": "npm --prefix base44-export-2026-07-04T20-03-54-120Z run lint",
+    "typecheck": "npm --prefix base44-export-2026-07-04T20-03-54-120Z run typecheck",
+    "preview": "npm --prefix base44-export-2026-07-04T20-03-54-120Z run preview"
+  }
+}

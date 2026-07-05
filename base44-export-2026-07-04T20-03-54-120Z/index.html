@@ -6,6 +6,17 @@
     <title>Diamond Edge — MLB Player Prop Analyzer</title>
     <meta name="description" content="Data-first MLB player prop analysis. Objective scoring, floor/ceiling/trigger explanations, and self-improving accuracy tracking for hits, HRR, total bases, home runs, and strikeouts." />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◆</text></svg>" />
+    <script>
+      // Enables BrowserRouter deep links on GitHub Pages by restoring path from 404 redirect query.
+      (function () {
+        var redirect = sessionStorage.redirect;
+        if (!redirect) return;
+        delete sessionStorage.redirect;
+        if (redirect.indexOf(location.origin) !== 0) return;
+        var path = redirect.slice(location.origin.length);
+        window.history.replaceState(null, null, path);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

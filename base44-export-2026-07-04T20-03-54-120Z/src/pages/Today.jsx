@@ -38,6 +38,11 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function isFinalGameStatus(status) {
+  const s = String(status ?? "").toLowerCase();
+  return s.includes("final") || s.includes("game over") || s.includes("completed");
+}
+
 export default function Today() {
   const [date, setDate] = useState(todayStr());
   const [market, setMarket] = useState("all");
@@ -72,7 +77,12 @@ export default function Today() {
   });
 
   const games = data?.games ?? [];
+  const finalGamePks = new Set(
+    games.filter((g) => isFinalGameStatus(g.status)).map((g) => g.game_pk)
+  );
   const predictions = (data?.predictions ?? []).filter((p) => {
+    // Exclude recommendations from games that are already final.
+    if (p.recommended && finalGamePks.has(p.game_pk)) return false;
     if (market !== "all" && p.market !== market) return false;
     if (onlyRec && !p.recommended) return false;
     return true;

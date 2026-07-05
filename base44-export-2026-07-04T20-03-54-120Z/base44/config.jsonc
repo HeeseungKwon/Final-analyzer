@@ -1,0 +1,7 @@
+{
+  "name": "Final analyzer",
+  "site": {
+    "serveCommand": "npm run dev",
+    "outputDirectory": "dist"
+  }
+}
