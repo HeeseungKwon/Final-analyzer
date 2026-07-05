@@ -20,17 +20,17 @@ const MARKET_LIMITS = {
   hit_2: 10,
   hrr: 12,
   total_bases: 12,
-  home_run: 8,
+  home_run: 12,
   strikeouts: 8,
 };
 
 const MARKET_MIN_CONFIDENCE = {
-  hit_1: 57,
-  hit_2: 60,
-  hrr: 58,
-  total_bases: 58,
-  home_run: 62,
-  strikeouts: 60,
+  hit_1: 55,
+  hit_2: 57,
+  hrr: 55,
+  total_bases: 55,
+  home_run: 58,
+  strikeouts: 57,
 };
 
 const MARKET_TRUST_BONUS = {
@@ -58,12 +58,12 @@ const MARKET_POPULARITY = {
 };
 
 const CONSENSUS_THRESHOLD = {
-  hit_1: 73,
-  hit_2: 79,
-  hrr: 74,
-  total_bases: 72,
-  strikeouts: 75,
-  home_run: 84,
+  hit_1: 60,
+  hit_2: 62,
+  hrr: 61,
+  total_bases: 60,
+  strikeouts: 61,
+  home_run: 54,
 };
 
 function parseFeatures(raw) {
@@ -87,7 +87,12 @@ function rankForPortfolio(row) {
   const spread = Math.max(0, (row.ceiling ?? 0) - (row.floor ?? 0));
   const certaintyBonus = Math.max(0, 8 - spread * 12);
 
-  return (row.rec_score ?? 0) + consensusBonus + marketBonus + pOverBonus + certaintyBonus;
+  // Bonus for STRONG HR picks (model beats both park and Vegas baselines)
+  const verdictBonus = row.market === "home_run" && row.verdict === "strong" ? 10
+    : row.market === "home_run" && row.verdict === "middling" ? 5
+    : 0;
+
+  return (row.rec_score ?? 0) + consensusBonus + marketBonus + pOverBonus + certaintyBonus + verdictBonus;
 }
 
 function styleForPortfolio(row) {
@@ -251,8 +256,8 @@ function applyHybridConsensus(scores, legacyMap, marketReliability) {
     const threshold = CONSENSUS_THRESHOLD[s.market] ?? 75;
     const consensusGate =
       s.market === "home_run"
-        ? (s.recScore >= 60 && legacyRec >= 52 && agree >= 0.4)
-        : (s.recScore >= 50 && legacyRec >= 45 && agree >= 0.28);
+        ? (s.recScore >= 48 && legacyRec >= 42 && agree >= 0.2)
+        : (s.recScore >= 44 && legacyRec >= 38 && agree >= 0.2);
 
     const recommended = consensusGate && hybridRec >= threshold && s.dataQuality !== "missing";
 
