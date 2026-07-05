@@ -87,10 +87,12 @@ function rankForPortfolio(row) {
   const spread = Math.max(0, (row.ceiling ?? 0) - (row.floor ?? 0));
   const certaintyBonus = Math.max(0, 8 - spread * 12);
 
-  // Bonus for STRONG HR picks (model beats both park and Vegas baselines)
-  const verdictBonus = row.market === "home_run" && row.verdict === "strong" ? 10
-    : row.market === "home_run" && row.verdict === "middling" ? 5
-    : 0;
+  // Bonus for STRONG/MIDDLING HR picks (model beats or sits between baselines)
+  let verdictBonus = 0;
+  if (row.market === "home_run") {
+    if (row.verdict === "strong") verdictBonus = 10;
+    else if (row.verdict === "middling") verdictBonus = 5;
+  }
 
   return (row.rec_score ?? 0) + consensusBonus + marketBonus + pOverBonus + certaintyBonus + verdictBonus;
 }

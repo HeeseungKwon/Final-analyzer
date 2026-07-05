@@ -53,11 +53,9 @@ export default function Parlays() {
   });
 
   // Reset selected games whenever the date changes
-  const prevDate = React.useRef(date);
-  if (prevDate.current !== date) {
-    prevDate.current = date;
+  React.useEffect(() => {
     setSelectedGamePks(new Set());
-  }
+  }, [date]);
 
   const games = data?.games ?? [];
   const eligiblePredictions = data?.eligiblePredictions ?? [];
@@ -103,8 +101,6 @@ export default function Parlays() {
     setSelectedGamePks(new Set());
   }
 
-  const parlaysToShow = parlays;
-
   return (
     <AppShell>
       <div className="mb-6 flex items-end justify-between">
@@ -119,7 +115,7 @@ export default function Parlays() {
       </div>
 
       {isLoading && <div className="py-10 text-center text-muted-foreground">Loading…</div>}
-      {!isLoading && parlaysToShow.length === 0 && selectedGamePks.size === 0 && (
+      {!isLoading && parlays.length === 0 && selectedGamePks.size === 0 && (
         <Card>
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
             {data?.note ?? "No parlays available. Run today's analysis on the Today page first."}
@@ -309,7 +305,7 @@ export default function Parlays() {
       {selectedGamePks.size === 0 && (
         <>
       <div className="grid gap-4">
-        {parlaysToShow.map((p) => {
+        {parlays.map((p) => {
           const edge = p.edge;
           const good = edge > 0;
           return (
@@ -372,7 +368,7 @@ export default function Parlays() {
         })}
       </div>
 
-      {data?.note && parlaysToShow.length > 0 && (
+      {data?.note && parlays.length > 0 && (
         <p className="mt-6 text-center text-xs text-muted-foreground">{data.note}</p>
       )}
 
