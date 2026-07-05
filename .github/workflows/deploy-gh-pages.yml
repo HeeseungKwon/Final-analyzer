@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - refactor/clean-architecture
   workflow_dispatch:
 
 permissions:
