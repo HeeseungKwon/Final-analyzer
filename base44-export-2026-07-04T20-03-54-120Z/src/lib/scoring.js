@@ -315,21 +315,25 @@ export function scoreHitter(name, ctx) {
     if (s.market === "home_run") {
       const liftVsPark = s.features?.liftVsPark ?? 0;
       const certainty = Math.max(0, 1 - (s.ceiling - s.floor) * 3.5);
+      // STRONG verdict = model beats both park and Vegas baselines → meaningful edge signal
+      // MIDDLING verdict = model sits between baselines → potential hidden edge
+      const verdictBonus = s.verdict === "strong" ? 8 : s.verdict === "middling" ? 4 : 0;
       const recScore =
         s.confidence * 0.42 +
         pOver * 34 +
         Math.max(0, liftVsPark) * 110 +
         Math.max(0, s.triggerStrength) * 14 +
-        certainty * 10;
+        certainty * 10 +
+        verdictBonus;
       s.recScore = clamp(recScore, 0, 100);
-      s.recommended = s.recScore >= 58 && s.dataQuality !== "missing";
+      s.recommended = s.recScore >= 52 && s.dataQuality !== "missing";
     } else {
       const recScore =
         s.confidence * 0.5 +
         pOver * 30 +
         Math.max(0, s.triggerStrength) * 18;
       s.recScore = clamp(recScore, 0, 100);
-      s.recommended = s.recScore >= 56 && s.dataQuality !== "missing";
+      s.recommended = s.recScore >= 50 && s.dataQuality !== "missing";
     }
   }
 
