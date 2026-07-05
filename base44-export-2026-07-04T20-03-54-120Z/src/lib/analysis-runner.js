@@ -7,13 +7,190 @@ import {
   fetchHitterStats,
   fetchHitterRecent,
   fetchPitcherStats,
-  fetchTeamPitchingK,
   fetchTeamHittingSO,
   fetchGameLineup,
   currentMlbSeason,
   todayIsoDate,
 } from "@/lib/mlb-api";
 import { scoreHitter, scorePitcher, parkFactorFor } from "@/lib/scoring";
+import { scoreHitterLegacy, scorePitcherLegacy } from "@/lib/scoring-legacy";
+
+const MARKET_LIMITS = {
+  hit_1: 18,
+  hit_2: 10,
+  hrr: 12,
+  total_bases: 12,
+  home_run: 8,
+  strikeouts: 8,
+};
+
+const MARKET_MIN_CONFIDENCE = {
+  hit_1: 57,
+  hit_2: 60,
+  hrr: 58,
+  total_bases: 58,
+  home_run: 62,
+  strikeouts: 60,
+};
+
+const MARKET_TRUST_BONUS = {
+  hit_1: 8,
+  strikeouts: 8,
+  total_bases: 5,
+  hrr: 4,
+  home_run: 3,
+  hit_2: 2,
+};
+
+const PORTFOLIO_STYLE_WEIGHTS = {
+  aggressive: 0.4,
+  neutral: 0.4,
+  conservative: 0.2,
+};
+
+const MARKET_POPULARITY = {
+  hit_1: 1.0,
+  strikeouts: 0.9,
+  hrr: 0.82,
+  total_bases: 0.78,
+  hit_2: 0.72,
+  home_run: 0.62,
+};
+
+const CONSENSUS_THRESHOLD = {
+  hit_1: 73,
+  hit_2: 79,
+  hrr: 74,
+  total_bases: 72,
+  strikeouts: 75,
+  home_run: 84,
+};
+
+function parseFeatures(raw) {
+  if (!raw) return {};
+  if (typeof raw === "object") return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function rankForPortfolio(row) {
+  const features = parseFeatures(row.features);
+  const consensusBonus = features.consensus_legacy ? 12 : 0;
+  const marketBonus = MARKET_TRUST_BONUS[row.market] ?? 0;
+
+  const pOver = Number(features.pOverLine);
+  const pOverBonus = Number.isFinite(pOver) ? Math.max(0, (pOver - 0.5) * 45) : 0;
+
+  const spread = Math.max(0, (row.ceiling ?? 0) - (row.floor ?? 0));
+  const certaintyBonus = Math.max(0, 8 - spread * 12);
+
+  return (row.rec_score ?? 0) + consensusBonus + marketBonus + pOverBonus + certaintyBonus;
+}
+
+function styleForPortfolio(row) {
+  const features = parseFeatures(row.features);
+  const spread = Math.max(0, (row.ceiling ?? 0) - (row.floor ?? 0));
+  const pOver = Number(features.pOverLine ?? NaN);
+
+  if (
+    row.market === "home_run" ||
+    row.market === "hit_2" ||
+    (row.market === "total_bases" && spread > 1.1) ||
+    (Number.isFinite(pOver) && pOver < 0.58)
+  ) {
+    return "aggressive";
+  }
+
+  if (
+    (row.market === "hit_1" || row.market === "strikeouts") &&
+    (row.confidence ?? 0) >= 72 &&
+    spread <= (row.market === "strikeouts" ? 3.2 : 0.28)
+  ) {
+    return "conservative";
+  }
+
+  return "neutral";
+}
+
+function rebalanceRecommendations(rows) {
+  const GLOBAL_MAX = 66;
+  const MAX_PER_PLAYER = 2;
+  const MAX_PER_GAME = 6;
+
+  const candidates = rows
+    .map((row, idx) => ({
+      row,
+      idx,
+      portfolioScore: rankForPortfolio(row),
+      style: styleForPortfolio(row),
+    }))
+    .filter(({ row }) => row.data_quality !== "missing")
+    .filter(({ row }) => (row.confidence ?? 0) >= (MARKET_MIN_CONFIDENCE[row.market] ?? 58))
+    .sort((a, b) => b.portfolioScore - a.portfolioScore);
+
+  const byMarket = new Map();
+  const byPlayer = new Map();
+  const byGame = new Map();
+  const selected = new Set();
+
+  const canTake = (c) => {
+    if (selected.has(c.idx)) return false;
+    if (selected.size >= GLOBAL_MAX) return false;
+
+    const marketCount = byMarket.get(c.row.market) ?? 0;
+    if (marketCount >= (MARKET_LIMITS[c.row.market] ?? 10)) return false;
+
+    const playerCount = byPlayer.get(c.row.player_id) ?? 0;
+    if (playerCount >= MAX_PER_PLAYER) return false;
+
+    const gameCount = byGame.get(c.row.game_pk) ?? 0;
+    if (gameCount >= MAX_PER_GAME) return false;
+
+    return true;
+  };
+
+  const take = (c) => {
+    selected.add(c.idx);
+    byMarket.set(c.row.market, (byMarket.get(c.row.market) ?? 0) + 1);
+    byPlayer.set(c.row.player_id, (byPlayer.get(c.row.player_id) ?? 0) + 1);
+    byGame.set(c.row.game_pk, (byGame.get(c.row.game_pk) ?? 0) + 1);
+  };
+
+  const targets = {
+    aggressive: Math.round(GLOBAL_MAX * PORTFOLIO_STYLE_WEIGHTS.aggressive),
+    neutral: Math.round(GLOBAL_MAX * PORTFOLIO_STYLE_WEIGHTS.neutral),
+  };
+  targets.conservative = Math.max(0, GLOBAL_MAX - targets.aggressive - targets.neutral);
+
+  const styleBuckets = {
+    aggressive: candidates.filter((c) => c.style === "aggressive"),
+    neutral: candidates.filter((c) => c.style === "neutral"),
+    conservative: candidates.filter((c) => c.style === "conservative"),
+  };
+
+  for (const style of ["aggressive", "neutral", "conservative"]) {
+    let count = 0;
+    for (const c of styleBuckets[style]) {
+      if (count >= targets[style]) break;
+      if (!canTake(c)) continue;
+      take(c);
+      count += 1;
+    }
+  }
+
+  for (const c of candidates) {
+    if (selected.size >= GLOBAL_MAX) break;
+    if (!canTake(c)) continue;
+    take(c);
+  }
+
+  rows.forEach((r, idx) => {
+    r.recommended = selected.has(idx);
+  });
+}
 
 function expectedPAForBattingOrder(order) {
   if (!order || order <= 0) return 3.8;
@@ -21,6 +198,78 @@ function expectedPAForBattingOrder(order) {
   if (order <= 5) return 4.2;
   if (order <= 7) return 3.9;
   return 3.6;
+}
+
+function projectionDistance(a, b, market) {
+  const x = Number(a ?? 0);
+  const y = Number(b ?? 0);
+  if (market === "home_run" || market === "hit_1" || market === "hit_2") {
+    return Math.min(1, Math.abs(x - y) / 0.22);
+  }
+  if (market === "strikeouts") {
+    return Math.min(1, Math.abs(x - y) / 2.2);
+  }
+  return Math.min(1, Math.abs(x - y) / 1.6);
+}
+
+function buildMarketReliability(accuracyRows) {
+  const agg = {};
+  for (const r of accuracyRows ?? []) {
+    const m = r.market;
+    if (!agg[m]) agg[m] = { n: 0, hits: 0 };
+    agg[m].n += r.n_predictions ?? 0;
+    agg[m].hits += r.n_hits ?? 0;
+  }
+  const rel = {};
+  for (const [m, v] of Object.entries(agg)) {
+    rel[m] = v.n > 0 ? v.hits / v.n : 0.5;
+  }
+  return rel;
+}
+
+function toLegacyMap(scores) {
+  const map = new Map();
+  for (const s of scores) map.set(s.market, s);
+  return map;
+}
+
+function applyHybridConsensus(scores, legacyMap, marketReliability) {
+  return scores.map((s) => {
+    const legacy = legacyMap.get(s.market);
+    const legacyRec = legacy?.recScore ?? s.recScore;
+    const reliability = marketReliability[s.market] ?? 0.5;
+    const popularity = MARKET_POPULARITY[s.market] ?? 0.7;
+    const agree = 1 - projectionDistance(s.projection, legacy?.projection ?? s.projection, s.market);
+
+    const hybridRec =
+      s.recScore * 0.55 +
+      legacyRec * 0.23 +
+      agree * 100 * 0.12 +
+      reliability * 100 * 0.07 +
+      popularity * 100 * 0.03;
+
+    const threshold = CONSENSUS_THRESHOLD[s.market] ?? 75;
+    const consensusGate =
+      s.market === "home_run"
+        ? (s.recScore >= 60 && legacyRec >= 52 && agree >= 0.4)
+        : (s.recScore >= 50 && legacyRec >= 45 && agree >= 0.28);
+
+    const recommended = consensusGate && hybridRec >= threshold && s.dataQuality !== "missing";
+
+    return {
+      ...s,
+      recScore: Math.max(0, Math.min(100, hybridRec)),
+      recommended,
+      features: {
+        ...(s.features ?? {}),
+        legacyRecScore: legacyRec,
+        modelAgreement: agree,
+        marketReliability: reliability,
+        marketPopularity: popularity,
+        recommendationMode: "hybrid-consensus-v1",
+      },
+    };
+  });
 }
 
 export async function runAnalysis(dateArg, onProgress) {
@@ -36,7 +285,6 @@ export async function runAnalysis(dateArg, onProgress) {
 
   log(`Found ${games.length} games. Fetching lineups...`);
 
-  // Try to get lineups from boxscore data
   for (const g of games) {
     try {
       const lineup = await fetchGameLineup(g.game_pk);
@@ -49,7 +297,6 @@ export async function runAnalysis(dateArg, onProgress) {
     }
   }
 
-  // Clear old data for this date
   log("Clearing old data...");
   try {
     const oldGames = await db.entities.Game.filter({ game_date: date });
@@ -64,7 +311,6 @@ export async function runAnalysis(dateArg, onProgress) {
     if (oldExcl.length > 0) await db.entities.ExcludedPlayer.deleteMany({ game_date: date });
   } catch {}
 
-  // Save games
   log("Saving games...");
   await db.entities.Game.bulkCreate(
     games.map((g) => ({
@@ -84,18 +330,10 @@ export async function runAnalysis(dateArg, onProgress) {
     }))
   );
 
-  // Team K% caches
-  const teamPitchK = new Map();
+  const marketAccuracyRows = await db.entities.MarketAccuracy.list().catch(() => []);
+  const marketReliability = buildMarketReliability(marketAccuracyRows);
+
   const teamHitK = new Map();
-
-  async function getTeamPitchK(id) {
-    if (!teamPitchK.has(id)) {
-      const r = await fetchTeamPitchingK(id, season);
-      teamPitchK.set(id, r?.k_percent ?? null);
-    }
-    return teamPitchK.get(id);
-  }
-
   async function getTeamHitK(id) {
     if (!teamHitK.has(id)) {
       const r = await fetchTeamHittingSO(id, season);
@@ -104,14 +342,14 @@ export async function runAnalysis(dateArg, onProgress) {
     return teamHitK.get(id);
   }
 
-  const pitcherKCache = new Map();
-  async function getSPk(pid) {
+  const pitcherStatCache = new Map();
+  async function getSPStats(pid) {
     if (!pid) return null;
-    if (!pitcherKCache.has(pid)) {
+    if (!pitcherStatCache.has(pid)) {
       const s = await fetchPitcherStats(pid, season);
-      pitcherKCache.set(pid, s?.k_percent ?? null);
+      pitcherStatCache.set(pid, s ?? null);
     }
-    return pitcherKCache.get(pid);
+    return pitcherStatCache.get(pid);
   }
 
   const predictionRows = [];
@@ -124,7 +362,7 @@ export async function runAnalysis(dateArg, onProgress) {
 
     for (const side of ["home", "away"]) {
       const teamId = side === "home" ? g.home_team_id : g.away_team_id;
-      const oppTeamId = side === "home" ? g.away_team_id : g.home_team_id;
+      const teamName = side === "home" ? g.home_team_name : g.away_team_name;
       const oppSP = side === "home" ? g.away_probable_pitcher_id : g.home_probable_pitcher_id;
       const lineupPlayers = side === "home" ? g.home_lineup_players : g.away_lineup_players;
 
@@ -137,7 +375,11 @@ export async function runAnalysis(dateArg, onProgress) {
         continue;
       }
 
-      const oppSPk = await getSPk(oppSP);
+      const oppSPStats = await getSPStats(oppSP);
+      const oppSPk = oppSPStats?.k_percent ?? null;
+      const oppSPhrPerBF = oppSPStats && (oppSPStats.bf ?? 0) > 0
+        ? (oppSPStats.hr_allowed ?? 0) / oppSPStats.bf
+        : null;
 
       for (const lp of lineupPlayers) {
         try {
@@ -149,22 +391,36 @@ export async function runAnalysis(dateArg, onProgress) {
             excludedRows.push({ game_date: date, player_id: lp.id, player_name: lp.fullName, reason: "No hitting stats available" });
             continue;
           }
-          const scores = scoreHitter(lp.fullName, {
+
+          const baseCtx = {
             season: seasonStats,
             recent,
             oppPitcherK: oppSPk,
+            oppPitcherHrPerBF: oppSPhrPerBF,
             oppBullpenK: null,
             expectedPA: expectedPAForBattingOrder(lp.battingOrder),
             battingOrder: lp.battingOrder,
             parkFactor: parkFactorFor(g.home_team_id),
             vegasHrProb: null,
-          });
-          for (const s of scores) {
+          };
+
+          const modernScores = scoreHitter(lp.fullName, baseCtx);
+          const legacyScores = scoreHitterLegacy(lp.fullName, baseCtx);
+          const legacyRecommendedMarkets = new Set(legacyScores.filter((x) => x.recommended).map((x) => x.market));
+          const mergedScores = applyHybridConsensus(modernScores, toLegacyMap(legacyScores), marketReliability);
+
+          for (const s of mergedScores) {
+            const features = {
+              ...(s.features ?? {}),
+              consensus_legacy: legacyRecommendedMarkets.has(s.market),
+            };
             predictionRows.push({
               game_pk: g.game_pk,
               game_date: date,
               player_id: lp.id,
               player_name: lp.fullName,
+              team_id: teamId,
+              team_name: teamName,
               player_type: "hitter",
               market: s.market,
               confidence: Math.round(s.confidence * 100) / 100,
@@ -173,7 +429,7 @@ export async function runAnalysis(dateArg, onProgress) {
               ceiling: Math.round(s.ceiling * 10000) / 10000,
               trigger_text: s.trigger,
               trigger_strength: Math.round(s.triggerStrength * 100) / 100,
-              features: JSON.stringify(s.features),
+              features: JSON.stringify(features),
               data_quality: s.dataQuality,
               recommended: s.recommended,
               rec_score: Math.round(s.recScore * 100) / 100,
@@ -187,10 +443,11 @@ export async function runAnalysis(dateArg, onProgress) {
       }
     }
 
-    // Pitchers
     for (const side of ["home", "away"]) {
       const pid = side === "home" ? g.home_probable_pitcher_id : g.away_probable_pitcher_id;
       const pname = side === "home" ? g.home_probable_pitcher_name : g.away_probable_pitcher_name;
+      const teamId = side === "home" ? g.home_team_id : g.away_team_id;
+      const teamName = side === "home" ? g.home_team_name : g.away_team_name;
       const oppTeamId = side === "home" ? g.away_team_id : g.home_team_id;
       if (!pid || !pname) {
         excludedRows.push({
@@ -207,17 +464,31 @@ export async function runAnalysis(dateArg, onProgress) {
           continue;
         }
         const oppTeamKRate = await getTeamHitK(oppTeamId);
-        const scores = scorePitcher(pname, {
+        const modernScores = scorePitcher(pname, {
           season: st,
           oppTeamK: oppTeamKRate,
           expectedIP: 5.5,
         });
-        for (const s of scores) {
+        const legacyScores = scorePitcherLegacy(pname, {
+          season: st,
+          oppTeamK: oppTeamKRate,
+          expectedIP: 5.5,
+        });
+        const legacyRecommendedMarkets = new Set(legacyScores.filter((x) => x.recommended).map((x) => x.market));
+        const mergedScores = applyHybridConsensus(modernScores, toLegacyMap(legacyScores), marketReliability);
+
+        for (const s of mergedScores) {
+          const features = {
+            ...(s.features ?? {}),
+            consensus_legacy: legacyRecommendedMarkets.has(s.market),
+          };
           predictionRows.push({
             game_pk: g.game_pk,
             game_date: date,
             player_id: pid,
             player_name: pname,
+            team_id: teamId,
+            team_name: teamName,
             player_type: "pitcher",
             market: s.market,
             confidence: Math.round(s.confidence * 100) / 100,
@@ -226,7 +497,7 @@ export async function runAnalysis(dateArg, onProgress) {
             ceiling: Math.round(s.ceiling * 10000) / 10000,
             trigger_text: s.trigger,
             trigger_strength: Math.round(s.triggerStrength * 100) / 100,
-            features: JSON.stringify(s.features),
+            features: JSON.stringify(features),
             data_quality: s.dataQuality,
             recommended: s.recommended,
             rec_score: Math.round(s.recScore * 100) / 100,
@@ -240,14 +511,14 @@ export async function runAnalysis(dateArg, onProgress) {
     }
   }
 
-  // Persist predictions in batches
+  rebalanceRecommendations(predictionRows);
+
   log(`Saving ${predictionRows.length} predictions...`);
   const BATCH = 50;
   for (let i = 0; i < predictionRows.length; i += BATCH) {
     await db.entities.Prediction.bulkCreate(predictionRows.slice(i, i + BATCH));
   }
 
-  // Persist excluded
   if (excludedRows.length > 0) {
     log(`Saving ${excludedRows.length} exclusions...`);
     await db.entities.ExcludedPlayer.bulkCreate(excludedRows);

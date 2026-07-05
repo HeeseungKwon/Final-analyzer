@@ -1,4 +1,4 @@
-// Deterministic scoring for MLB player props
+// Probability-model scoring for MLB player props
 
 export const MARKET_LABELS = {
   hit_1: "1+ Hit",
@@ -18,24 +18,17 @@ export const MARKET_PROJECTION_UNIT = {
   strikeouts: { unit: "count", label: "Exp. K", description: "Expected strikeouts for the starting pitcher. Line = 5.5." },
 };
 
-function binomAtLeast(n, p, k) {
-  if (n <= 0) return 0;
-  p = Math.max(0, Math.min(1, p));
-  let logC = 0;
-  const logP = Math.log(p || 1e-9);
-  const log1p = Math.log(1 - p || 1e-9);
-  const pmf = (i) => Math.exp(logC + i * logP + (n - i) * log1p);
-  let cum = 0;
-  for (let i = 0; i <= n; i++) {
-    if (i === 0) {
-      cum += Math.exp(n * log1p);
-    } else {
-      logC += Math.log((n - i + 1) / i);
-      cum += pmf(i);
-    }
-    if (i + 1 === k) return Math.max(0, Math.min(1, 1 - cum));
-  }
-  return 0;
+const LEAGUE = {
+  hitPerAB: 0.245,
+  hrPerPA: 0.032,
+  tbPerPA: 0.43,
+  hrrPerPA: 0.37,
+  kRate: 0.225,
+  pitcherHrPerBF: 0.032,
+};
+
+function clamp(x, lo, hi) {
+  return Math.max(lo, Math.min(hi, x));
 }
 
 function blend(season, recent, wRecent = 0.35) {
@@ -45,9 +38,50 @@ function blend(season, recent, wRecent = 0.35) {
   return season * (1 - wRecent) + recent * wRecent;
 }
 
-function toConfidence(prob, anchor = 0.5, slope = 120) {
+function toConfidence(prob, anchor = 0.5, slope = 130) {
   const c = 50 + slope * (prob - anchor);
-  return Math.max(0, Math.min(100, c));
+  return clamp(c, 0, 100);
+}
+
+function empiricalBayesRate(successes, trials, priorMean, priorStrength) {
+  const s = Number(successes ?? 0);
+  const n = Number(trials ?? 0);
+  const alpha = priorMean * priorStrength;
+  const beta = (1 - priorMean) * priorStrength;
+  if (n <= 0) return priorMean;
+  return (s + alpha) / (n + alpha + beta);
+}
+
+function binomAtLeast(n, p, k) {
+  if (n <= 0) return 0;
+  const pp = clamp(p, 1e-6, 1 - 1e-6);
+  let logC = 0;
+  const logP = Math.log(pp);
+  const log1p = Math.log(1 - pp);
+  let cum = 0;
+  for (let i = 0; i <= n; i++) {
+    if (i === 0) {
+      cum += Math.exp(n * log1p);
+    } else {
+      logC += Math.log((n - i + 1) / i);
+      cum += Math.exp(logC + i * logP + (n - i) * log1p);
+    }
+    if (i + 1 === k) return clamp(1 - cum, 0, 1);
+  }
+  return 0;
+}
+
+function poissonAtLeast(lambda, k) {
+  const l = Math.max(0, lambda);
+  if (k <= 0) return 1;
+  if (l === 0) return 0;
+  let term = Math.exp(-l);
+  let cum = term;
+  for (let i = 1; i < k; i++) {
+    term = (term * l) / i;
+    cum += term;
+  }
+  return clamp(1 - cum, 0, 1);
 }
 
 function baseFeatures(ctx, extras = {}) {
@@ -55,12 +89,12 @@ function baseFeatures(ctx, extras = {}) {
     expectedPA: ctx.expectedPA,
     battingOrder: ctx.battingOrder ?? null,
     oppPitcherK: ctx.oppPitcherK ?? null,
+    oppPitcherHrPerBF: ctx.oppPitcherHrPerBF ?? null,
     parkFactor: ctx.parkFactor ?? 100,
     ...extras,
   };
 }
 
-// Park factors
 const HR_PARK_FACTOR = {
   115: 118, 113: 116, 140: 113, 143: 111, 147: 110, 158: 108, 110: 108,
   112: 106, 141: 105, 111: 104, 109: 102, 144: 102, 120: 101, 108: 101,
@@ -83,187 +117,283 @@ function expectedPAForBattingOrder(order) {
 
 export function scoreHitter(name, ctx) {
   const out = [];
-  const dqBase = !ctx.season && !ctx.recent ? "missing" :
-    ctx.season?.quality === "partial" || ctx.recent?.quality === "partial" || !ctx.season || !ctx.recent ? "partial" : "ok";
+  const dqBase = !ctx.season && !ctx.recent
+    ? "missing"
+    : ctx.season?.quality === "partial" || ctx.recent?.quality === "partial" || !ctx.season || !ctx.recent
+      ? "partial"
+      : "ok";
 
-  const seasonAvg = ctx.season?.avg ?? null;
-  const recentAvg = ctx.recent && ctx.recent.ab >= 20 ? ctx.recent.avg : null;
-  const avg = blend(seasonAvg, recentAvg) ?? 0;
+  const seasonPA = ctx.season?.pa ?? 0;
+  const recentPA = ctx.recent?.pa ?? 0;
+  const seasonAB = ctx.season?.ab ?? 0;
+  const recentAB = ctx.recent?.ab ?? 0;
 
-  const seasonSlg = ctx.season?.slg ?? null;
-  const recentSlg = ctx.recent && ctx.recent.ab >= 20 ? ctx.recent.slg : null;
-  const slg = blend(seasonSlg, recentSlg) ?? 0;
+  const hitPerABSeason = empiricalBayesRate(ctx.season?.hits ?? 0, seasonAB, LEAGUE.hitPerAB, 120);
+  const hitPerABRecent = recentAB > 0
+    ? empiricalBayesRate(ctx.recent?.hits ?? 0, recentAB, hitPerABSeason, 45)
+    : null;
+  const hitPerAB = blend(hitPerABSeason, hitPerABRecent, recentPA >= 30 ? 0.45 : 0.25) ?? LEAGUE.hitPerAB;
 
-  const hrRateSeason = ctx.season && ctx.season.pa > 0 ? ctx.season.home_runs / ctx.season.pa : null;
-  const hrRateRecent = ctx.recent && ctx.recent.pa >= 30 ? ctx.recent.home_runs / ctx.recent.pa : null;
-  const hrRate = blend(hrRateSeason, hrRateRecent) ?? 0;
+  const hrPerPASeason = empiricalBayesRate(ctx.season?.home_runs ?? 0, seasonPA, LEAGUE.hrPerPA, 220);
+  const hrPerPARecent = recentPA > 0
+    ? empiricalBayesRate(ctx.recent?.home_runs ?? 0, recentPA, hrPerPASeason, 70)
+    : null;
+  const hrPerPA = blend(hrPerPASeason, hrPerPARecent, recentPA >= 35 ? 0.4 : 0.2) ?? LEAGUE.hrPerPA;
 
-  const hrrRateSeason = ctx.season && ctx.season.pa > 0 ? (ctx.season.hits + ctx.season.runs + ctx.season.rbi) / ctx.season.pa : null;
-  const hrrRateRecent = ctx.recent && ctx.recent.pa >= 30 ? (ctx.recent.hits + ctx.recent.runs + ctx.recent.rbi) / ctx.recent.pa : null;
-  const hrrRate = blend(hrrRateSeason, hrrRateRecent) ?? 0;
+  const seasonTB = (ctx.season?.hits ?? 0) + (ctx.season?.doubles ?? 0) + (ctx.season?.triples ?? 0) * 2 + (ctx.season?.home_runs ?? 0) * 3;
+  const recentTB = (ctx.recent?.hits ?? 0) + (ctx.recent?.doubles ?? 0) + (ctx.recent?.triples ?? 0) * 2 + (ctx.recent?.home_runs ?? 0) * 3;
+  const tbPerPASeason = empiricalBayesRate(seasonTB, seasonPA, LEAGUE.tbPerPA, 140);
+  const tbPerPARecent = recentPA > 0
+    ? empiricalBayesRate(recentTB, recentPA, tbPerPASeason, 45)
+    : null;
+  const tbPerPA = blend(tbPerPASeason, tbPerPARecent, recentPA >= 35 ? 0.4 : 0.2) ?? LEAGUE.tbPerPA;
 
-  const leagueK = 0.225;
-  const oppK = ctx.oppPitcherK ?? leagueK;
-  const matchupMult = 1 + (leagueK - oppK) * 1.2;
+  const seasonHRR = (ctx.season?.hits ?? 0) + (ctx.season?.runs ?? 0) + (ctx.season?.rbi ?? 0);
+  const recentHRR = (ctx.recent?.hits ?? 0) + (ctx.recent?.runs ?? 0) + (ctx.recent?.rbi ?? 0);
+  const hrrPerPASeason = empiricalBayesRate(seasonHRR, seasonPA, LEAGUE.hrrPerPA, 140);
+  const hrrPerPARecent = recentPA > 0
+    ? empiricalBayesRate(recentHRR, recentPA, hrrPerPASeason, 45)
+    : null;
+  const hrrPerPA = blend(hrrPerPASeason, hrrPerPARecent, recentPA >= 35 ? 0.4 : 0.2) ?? LEAGUE.hrrPerPA;
 
-  const adjAvg = Math.max(0, avg * matchupMult);
-  const adjSlg = Math.max(0, slg * matchupMult);
-  const adjHR = Math.max(0, hrRate * matchupMult);
-  const adjHrr = Math.max(0, hrrRate * matchupMult);
+  const expectedPA = Math.max(3.0, ctx.expectedPA ?? expectedPAForBattingOrder(ctx.battingOrder));
+  const expectedAB = Math.max(2, Math.round(expectedPA * 0.87));
+  const oppK = ctx.oppPitcherK ?? LEAGUE.kRate;
+  const contactMult = clamp(1 + (LEAGUE.kRate - oppK) * 0.9, 0.85, 1.15);
 
-  const expectedAB = Math.max(3, Math.round(ctx.expectedPA * 0.88));
+  const oppPitcherHrPerBF = ctx.oppPitcherHrPerBF ?? LEAGUE.pitcherHrPerBF;
+  const pitcherHrMult = clamp(oppPitcherHrPerBF / LEAGUE.pitcherHrPerBF, 0.75, 1.35);
+  const parkFactor = ctx.parkFactor ?? 100;
+  const parkHrMult = clamp(parkFactor / 100, 0.8, 1.25);
+  const recentHrDelta = hrPerPARecent != null ? clamp((hrPerPARecent - hrPerPASeason) * 8, -0.18, 0.18) : 0;
+  const hrFormMult = 1 + recentHrDelta;
+
+  const hitRateAdj = clamp(hitPerAB * contactMult, 0.12, 0.45);
+  const hrPerPAAdj = clamp(hrPerPA * pitcherHrMult * parkHrMult * hrFormMult, 0.004, 0.16);
+  const tbPerPAAdj = clamp(tbPerPA * contactMult * clamp(1 + (parkFactor - 100) / 100 * 0.15, 0.9, 1.1), 0.18, 0.95);
+  const hrrPerPAAdj = clamp(hrrPerPA * contactMult, 0.18, 0.95);
 
   const triggers = [];
-  if (recentAvg && seasonAvg && recentAvg - seasonAvg > 0.04) triggers.push(`hot last 15 (.${(recentAvg * 1000).toFixed(0)})`);
-  if (recentAvg && seasonAvg && seasonAvg - recentAvg > 0.04) triggers.push(`cold recent (.${(recentAvg * 1000).toFixed(0)})`);
-  if (oppK && oppK < leagueK - 0.03) triggers.push(`weak-K pitcher (${(oppK * 100).toFixed(1)}%)`);
-  if (oppK && oppK > leagueK + 0.03) triggers.push(`strikeout pitcher (${(oppK * 100).toFixed(1)}%)`);
-  const trigger = triggers[0] ?? `season .${(avg * 1000).toFixed(0)} / ${(hrRate * 100).toFixed(1)}% HR`;
-  const formDelta = recentAvg && seasonAvg ? (recentAvg - seasonAvg) * 4 : 0;
-  const triggerStrength = Math.max(-1, Math.min(1, (matchupMult - 1) * 2 + formDelta));
+  if (hrPerPARecent != null && hrPerPARecent > hrPerPASeason + 0.012) triggers.push("HR form up");
+  if (hrPerPARecent != null && hrPerPARecent < hrPerPASeason - 0.012) triggers.push("HR form down");
+  if (oppK < LEAGUE.kRate - 0.02) triggers.push(`contact matchup (${(oppK * 100).toFixed(1)}% K)`);
+  if (oppPitcherHrPerBF > LEAGUE.pitcherHrPerBF + 0.004) triggers.push("HR-prone pitcher");
+  const trigger = triggers[0] ?? `EB rates: HR ${(hrPerPAAdj * 100).toFixed(1)}%/PA, Hit ${(hitRateAdj * 100).toFixed(1)}%/AB`;
+  const triggerStrength = clamp((contactMult - 1) * 1.7 + (pitcherHrMult - 1) * 1.4 + recentHrDelta * 2.4, -1, 1);
 
-  // hit_1
   {
-    const p = 1 - Math.pow(1 - adjAvg, expectedAB);
-    const floor = 1 - Math.pow(1 - adjAvg * 0.85, expectedAB - 1);
-    const ceiling = 1 - Math.pow(1 - adjAvg * 1.15, expectedAB + 1);
+    const p = 1 - Math.pow(1 - hitRateAdj, expectedAB);
+    const floor = 1 - Math.pow(1 - clamp(hitRateAdj * 0.9, 0.08, 0.5), Math.max(1, expectedAB - 1));
+    const ceiling = 1 - Math.pow(1 - clamp(hitRateAdj * 1.1, 0.08, 0.55), expectedAB + 1);
     out.push({
-      market: "hit_1", confidence: toConfidence(p, 0.65, 130), projection: p,
-      floor, ceiling, trigger, triggerStrength,
-      features: baseFeatures(ctx, { avg, adjAvg, expectedAB, oppK, matchupMult }),
-      dataQuality: dqBase, recommended: false, recScore: 0,
+      market: "hit_1",
+      confidence: toConfidence(p, 0.64, 120),
+      projection: p,
+      floor,
+      ceiling,
+      trigger,
+      triggerStrength,
+      features: baseFeatures(ctx, { hitPerAB, hitRateAdj, expectedAB, pOverLine: p }),
+      dataQuality: dqBase,
+      recommended: false,
+      recScore: 0,
     });
   }
-  // hit_2
+
   {
-    const p = binomAtLeast(expectedAB, adjAvg, 2);
-    const floor = binomAtLeast(expectedAB - 1, adjAvg * 0.85, 2);
-    const ceiling = binomAtLeast(expectedAB + 1, adjAvg * 1.15, 2);
+    const p = binomAtLeast(expectedAB, hitRateAdj, 2);
+    const floor = binomAtLeast(Math.max(1, expectedAB - 1), clamp(hitRateAdj * 0.9, 0.08, 0.5), 2);
+    const ceiling = binomAtLeast(expectedAB + 1, clamp(hitRateAdj * 1.1, 0.08, 0.55), 2);
     out.push({
-      market: "hit_2", confidence: toConfidence(p, 0.25, 180), projection: p,
-      floor, ceiling, trigger, triggerStrength,
-      features: baseFeatures(ctx, { avg, adjAvg, expectedAB }),
-      dataQuality: dqBase, recommended: false, recScore: 0,
+      market: "hit_2",
+      confidence: toConfidence(p, 0.27, 170),
+      projection: p,
+      floor,
+      ceiling,
+      trigger,
+      triggerStrength,
+      features: baseFeatures(ctx, { hitPerAB, hitRateAdj, expectedAB, pOverLine: p }),
+      dataQuality: dqBase,
+      recommended: false,
+      recScore: 0,
     });
   }
-  // home_run
+
   {
-    // Our own independent HR probability, from this hitter's blended HR rate,
-    // matchup-adjusted and scaled to expected plate appearances. No Vegas input.
-    const p = 1 - Math.pow(1 - adjHR, ctx.expectedPA);
-    const parkFactor = ctx.parkFactor ?? 100;
-    const leagueHrPerPa = 0.032;
-    const parkHrPerPa = leagueHrPerPa * (parkFactor / 100);
-    // Park-neutral baseline (any average hitter, this park, these PAs) — used
-    // only as a display comparison, never as a recommendation input.
-    const parkHrProb = 1 - Math.pow(1 - parkHrPerPa, ctx.expectedPA);
-    // Vegas is optional and informational only (display comparison). It is
-    // NEVER used to compute confidence or the recommendation below.
+    const p = 1 - Math.pow(1 - hrPerPAAdj, expectedPA);
+    const parkHrPerPA = LEAGUE.hrPerPA * (parkFactor / 100);
+    const parkHrProb = 1 - Math.pow(1 - parkHrPerPA, expectedPA);
     const vegasHrProb = ctx.vegasHrProb ?? null;
     const liftVsPark = parkHrProb > 0 ? (p - parkHrProb) / parkHrProb : 0;
 
-    let verdict, verdictNote;
+    const nEff = Math.max(60, seasonPA + recentPA * 0.8);
+    const std = Math.sqrt((p * (1 - p)) / nEff);
+    const floor = clamp(p - 1.15 * std, 0, 1);
+    const ceiling = clamp(p + 1.15 * std, 0, 1);
+
+    let verdict;
+    let verdictNote;
     if (vegasHrProb != null) {
       const hi = Math.max(parkHrProb, vegasHrProb);
       const lo = Math.min(parkHrProb, vegasHrProb);
-      verdict = p > hi + 0.005 ? "strong" : p >= lo - 0.005 ? "middling" : "fade";
-      verdictNote = `Ours ${(p * 100).toFixed(1)}% vs Park ${(parkHrProb * 100).toFixed(1)}% vs Vegas ${(vegasHrProb * 100).toFixed(1)}%. Shown for comparison only — not used in the recommendation.`;
+      verdict = p > hi + 0.006 ? "strong" : p >= lo - 0.006 ? "middling" : "fade";
+      verdictNote = `Ours ${(p * 100).toFixed(1)}% vs Park ${(parkHrProb * 100).toFixed(1)}% vs Vegas ${(vegasHrProb * 100).toFixed(1)}%.`;
     } else {
-      verdict = p > parkHrProb + 0.005 ? "strong" : p >= parkHrProb - 0.005 ? "middling" : "fade";
-      verdictNote = `Ours ${(p * 100).toFixed(1)}% vs park-neutral baseline ${(parkHrProb * 100).toFixed(1)}% (no odds provider connected). Shown for comparison only — not used in the recommendation.`;
+      verdict = p > parkHrProb + 0.006 ? "strong" : p >= parkHrProb - 0.006 ? "middling" : "fade";
+      verdictNote = `Ours ${(p * 100).toFixed(1)}% vs park baseline ${(parkHrProb * 100).toFixed(1)}% (no Vegas).`;
     }
 
     out.push({
-      market: "home_run", confidence: toConfidence(p, 0.10, 300), projection: p,
-      floor: p * 0.6, ceiling: Math.min(1, p * 1.5),
-      trigger, triggerStrength,
-      features: { ...baseFeatures(ctx, { hrRate, adjHR, parkFactor, liftVsPark }), verdict, verdictNote, parkHrProb, vegasHrProb },
-      dataQuality: dqBase, recommended: false, recScore: 0,
-      verdict, verdictNote,
-    });
-  }
-  // total_bases
-  {
-    const tbPerPA = ctx.season && ctx.season.pa > 0
-      ? (ctx.season.hits + ctx.season.doubles + ctx.season.triples * 2 + ctx.season.home_runs * 3) / ctx.season.pa : slg;
-    const adjTB = tbPerPA * matchupMult;
-    const proj = adjTB * ctx.expectedPA;
-    out.push({
-      market: "total_bases", confidence: toConfidence(proj / 3, 0.5, 100), projection: proj,
-      floor: proj * 0.7, ceiling: proj * 1.4,
-      trigger, triggerStrength,
-      features: baseFeatures(ctx, { slg, adjSlg, tbPerPA }),
-      dataQuality: dqBase, recommended: false, recScore: 0,
-    });
-  }
-  // hrr
-  {
-    const proj = adjHrr * ctx.expectedPA;
-    out.push({
-      market: "hrr", confidence: toConfidence(proj / 3, 0.5, 100), projection: proj,
-      floor: proj * 0.65, ceiling: proj * 1.45,
-      trigger, triggerStrength,
-      features: baseFeatures(ctx, { hrrRate, adjHrr }),
-      dataQuality: dqBase, recommended: false, recScore: 0,
+      market: "home_run",
+      confidence: toConfidence(p, 0.1, 300),
+      projection: p,
+      floor,
+      ceiling,
+      trigger,
+      triggerStrength,
+      features: {
+        ...baseFeatures(ctx, {
+          hrPerPA,
+          hrPerPAAdj,
+          pitcherHrMult,
+          parkHrMult,
+          hrFormMult,
+          liftVsPark,
+          parkHrProb,
+          vegasHrProb,
+        }),
+        verdict,
+        verdictNote,
+        pOverLine: p,
+      },
+      dataQuality: dqBase,
+      recommended: false,
+      recScore: 0,
+      verdict,
+      verdictNote,
     });
   }
 
-  // Recommendation logic. HR recommendations are built from the full feature
-  // set (confidence, trigger/matchup, park-adjusted lift, floor/ceiling
-  // spread, lineup slot) — the verdict label is display-only, never a driver.
+  {
+    const lambda = tbPerPAAdj * expectedPA;
+    const pOver = poissonAtLeast(lambda, 2);
+    out.push({
+      market: "total_bases",
+      confidence: toConfidence(pOver, 0.5, 140),
+      projection: lambda,
+      floor: lambda * 0.72,
+      ceiling: lambda * 1.28,
+      trigger,
+      triggerStrength,
+      features: baseFeatures(ctx, { tbPerPA, tbPerPAAdj, pOverLine: pOver }),
+      dataQuality: dqBase,
+      recommended: false,
+      recScore: 0,
+    });
+  }
+
+  {
+    const lambda = hrrPerPAAdj * expectedPA;
+    const pOver = poissonAtLeast(lambda, 2);
+    out.push({
+      market: "hrr",
+      confidence: toConfidence(pOver, 0.5, 140),
+      projection: lambda,
+      floor: lambda * 0.7,
+      ceiling: lambda * 1.3,
+      trigger,
+      triggerStrength,
+      features: baseFeatures(ctx, { hrrPerPA, hrrPerPAAdj, pOverLine: pOver }),
+      dataQuality: dqBase,
+      recommended: false,
+      recScore: 0,
+    });
+  }
+
   for (const s of out) {
+    const pOver = s.features?.pOverLine ?? (s.market === "hit_1" || s.market === "hit_2" || s.market === "home_run" ? s.projection : 0.5);
     if (s.market === "home_run") {
       const liftVsPark = s.features?.liftVsPark ?? 0;
-      const lineupWeight = ctx.battingOrder && ctx.battingOrder <= 6 ? 1 : 0.7;
-      const spread = Math.max(0, s.ceiling - s.floor);
-      let recScore =
-        s.confidence * 0.45 +
-        Math.max(0, s.triggerStrength) * 20 +
-        Math.max(0, Math.min(liftVsPark, 1)) * 20 * lineupWeight +
-        Math.min(spread * 10, 10);
-      s.recScore = Math.min(100, Math.max(0, recScore));
-      s.recommended = s.recScore >= 55 && s.dataQuality !== "missing";
+      const certainty = Math.max(0, 1 - (s.ceiling - s.floor) * 3.5);
+      const recScore =
+        s.confidence * 0.42 +
+        pOver * 34 +
+        Math.max(0, liftVsPark) * 110 +
+        Math.max(0, s.triggerStrength) * 14 +
+        certainty * 10;
+      s.recScore = clamp(recScore, 0, 100);
+      s.recommended = s.recScore >= 58 && s.dataQuality !== "missing";
     } else {
-      let recScore = s.confidence * 0.4 + Math.max(0, s.triggerStrength) * 30 + (s.floor > 0.5 ? 15 : 0);
-      s.recScore = Math.min(100, recScore);
-      s.recommended = s.recScore >= 55 && s.dataQuality !== "missing";
+      const recScore =
+        s.confidence * 0.5 +
+        pOver * 30 +
+        Math.max(0, s.triggerStrength) * 18;
+      s.recScore = clamp(recScore, 0, 100);
+      s.recommended = s.recScore >= 56 && s.dataQuality !== "missing";
     }
   }
+
   return out;
 }
 
 export function scorePitcher(name, ctx) {
-  const out = [];
   const st = ctx.season;
-  if (!st) return out;
+  if (!st) return [];
+
   const dq = st.quality === "partial" ? "partial" : "ok";
-
-  const leagueK = 0.225;
+  const leagueK = LEAGUE.kRate;
   const oppK = ctx.oppTeamK ?? leagueK;
-  const matchupK = 1 + (oppK - leagueK) * 1.5;
-  const kPer9 = st.k_per_9 * matchupK;
-  const projK = (kPer9 / 9) * ctx.expectedIP;
 
-  const triggers = [];
-  if (oppK > leagueK + 0.02) triggers.push(`high-K offense (${(oppK * 100).toFixed(1)}%)`);
-  if (oppK < leagueK - 0.02) triggers.push(`low-K offense (${(oppK * 100).toFixed(1)}%)`);
-  const trigger = triggers[0] ?? `${kPer9.toFixed(1)} K/9 adjusted`;
-  const triggerStrength = Math.max(-1, Math.min(1, (matchupK - 1) * 3));
+  const kRateSeason = empiricalBayesRate(st.so ?? 0, st.bf ?? 0, leagueK, 220);
+  const matchupMult = clamp(1 + (oppK - leagueK) * 0.9, 0.82, 1.2);
+  const kRateAdj = clamp(kRateSeason * matchupMult, 0.12, 0.45);
 
-  out.push({
-    market: "strikeouts", confidence: toConfidence(projK / 9, 0.6, 80), projection: projK,
-    floor: projK * 0.7, ceiling: projK * 1.35,
-    trigger, triggerStrength,
-    features: { kPer9: st.k_per_9, adjustedKPer9: kPer9, oppTeamK: oppK, expectedIP: ctx.expectedIP, era: st.era, whip: st.whip },
-    dataQuality: dq, recommended: false, recScore: 0,
-  });
+  const expectedIP = ctx.expectedIP ?? clamp((st.gs ?? 0) > 0 ? (st.ip ?? 0) / (st.gs ?? 1) : 5.5, 4.5, 7.0);
+  const expectedBF = expectedIP * 4.2;
+  const lambdaK = expectedBF * kRateAdj;
+  const pOver = poissonAtLeast(lambdaK, 6);
 
-  for (const s of out) {
-    let recScore = s.confidence * 0.5 + Math.max(0, s.triggerStrength) * 25 + (s.projection >= 5.5 ? 15 : 0);
-    s.recScore = Math.min(100, recScore);
-    s.recommended = s.recScore >= 50 && s.dataQuality !== "missing";
-  }
-  return out;
+  const trigger =
+    oppK > leagueK + 0.02
+      ? `high-K offense (${(oppK * 100).toFixed(1)}%)`
+      : oppK < leagueK - 0.02
+        ? `low-K offense (${(oppK * 100).toFixed(1)}%)`
+        : `K model ${(lambdaK).toFixed(2)} vs line 5.5`;
+  const triggerStrength = clamp((matchupMult - 1) * 2.2, -1, 1);
+
+  const pick = {
+    market: "strikeouts",
+    confidence: toConfidence(pOver, 0.5, 160),
+    projection: lambdaK,
+    floor: lambdaK * 0.72,
+    ceiling: lambdaK * 1.28,
+    trigger,
+    triggerStrength,
+    features: {
+      kRateSeason,
+      kRateAdj,
+      oppTeamK: oppK,
+      expectedIP,
+      expectedBF,
+      pOverLine: pOver,
+      era: st.era,
+      whip: st.whip,
+    },
+    dataQuality: dq,
+    recommended: false,
+    recScore: 0,
+  };
+
+  pick.recScore = clamp(
+    pick.confidence * 0.52 +
+      pOver * 32 +
+      Math.max(0, pick.triggerStrength) * 12,
+    0,
+    100
+  );
+  pick.recommended = pick.recScore >= 55 && pick.dataQuality !== "missing";
+
+  return [pick];
 }
 
 export { expectedPAForBattingOrder };

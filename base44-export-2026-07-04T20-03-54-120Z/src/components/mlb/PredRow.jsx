@@ -80,6 +80,9 @@ export default function PredRow({ p, expanded, onToggle }) {
         <TableCell className="font-medium">
           <div className="flex items-center gap-2">
             {p.player_name}
+            {p.team_name && (
+              <span className="text-xs font-normal text-muted-foreground">({p.team_name})</span>
+            )}
             {p.player_type === "pitcher" && (
               <Badge variant="outline" className="text-[10px] px-1.5 py-0">SP</Badge>
             )}

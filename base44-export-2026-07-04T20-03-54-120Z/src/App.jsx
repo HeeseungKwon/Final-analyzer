@@ -16,6 +16,23 @@ import Parlays from '@/pages/Parlays';
 import Review from '@/pages/Review';
 import Excluded from '@/pages/Excluded';
 
+const FatalAppState = ({ title, message, actionLabel, onAction }) => (
+  <div className="fixed inset-0 flex items-center justify-center p-6 bg-background">
+    <div className="max-w-md w-full rounded-2xl border border-border bg-card p-8 shadow-sm text-center">
+      <h1 className="text-2xl font-bold text-foreground">{title}</h1>
+      <p className="mt-3 text-sm text-muted-foreground leading-6">{message}</p>
+      {onAction && actionLabel && (
+        <button
+          onClick={onAction}
+          className="mt-6 inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+        >
+          {actionLabel}
+        </button>
+      )}
+    </div>
+  </div>
+);
+
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
 
@@ -34,6 +51,15 @@ const AuthenticatedApp = () => {
       navigateToLogin();
       return null;
     }
+
+    return (
+      <FatalAppState
+        title="App could not start"
+        message={authError.message || 'A configuration or network error prevented the app from loading.'}
+        actionLabel="Retry"
+        onAction={() => window.location.reload()}
+      />
+    );
   }
 
   return (

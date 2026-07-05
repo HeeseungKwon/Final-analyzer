@@ -4,7 +4,6 @@ const db = globalThis.__B44_DB__ || { auth:{ isAuthenticated: async()=>false, me
 // recomputes MarketAccuracy hit-rate buckets.
 
 import { fetchBoxscore } from "@/lib/mlb-api";
-import { buildParlays, buildHRParlays } from "@/lib/parlays";
 
 function findPlayerSide(box, playerId) {
   if (box.teams?.home?.players?.[`ID${playerId}`]) return "home";
@@ -39,29 +38,23 @@ function evaluatePitcherMarket(market, pitching) {
   return null;
 }
 
+function normalizeDateStr(dateLike) {
+  return String(dateLike ?? "").slice(0, 10);
+}
+
 export async function gradeAllUngraded(onProgress) {
   const log = (m) => onProgress?.(m);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = normalizeDateStr(new Date().toISOString());
 
   log("Loading ungraded predictions...");
-  const ungraded = await db.entities.Prediction.filter({ graded: false });
-  const allPastPreds = ungraded.filter((p) => p.game_date < today);
-
-  // Only grade high-confidence picks (>65) plus any pick included in one of
-  // that day's parlays — keeps grading volume manageable.
-  const byDate = {};
-  for (const p of allPastPreds) (byDate[p.game_date] ||= []).push(p);
-  const parlayIds = new Set();
-  for (const date of Object.keys(byDate)) {
-    const dayPreds = byDate[date];
-    for (const parlay of [...buildParlays(dayPreds), ...buildHRParlays(dayPreds)]) {
-      for (const leg of parlay.legs) parlayIds.add(leg.predictionId);
-    }
-  }
-  const pastPreds = allPastPreds.filter((p) => (p.confidence ?? 0) > 65 || parlayIds.has(p.id));
+  const allPreds = await db.entities.Prediction.list();
+  const pastPreds = allPreds.filter((p) => {
+    const gameDate = normalizeDateStr(p.game_date);
+    return p.graded !== true && gameDate && gameDate <= today;
+  });
 
   if (pastPreds.length === 0) {
-    return { graded: 0, message: "No ungraded predictions from completed dates yet." };
+    return { graded: 0, message: "No ungraded predictions up to today yet." };
   }
 
   const boxCache = new Map();

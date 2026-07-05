@@ -11,6 +11,7 @@ import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp
 import AuthLayout from "@/components/AuthLayout";
 import GoogleIcon from "@/components/GoogleIcon";
 import { toast } from "@/components/ui/use-toast";
+import { appParams } from "@/lib/app-params";
 
 export default function Register() {
   const [email, setEmail] = useState("");
@@ -69,6 +70,15 @@ export default function Register() {
   };
 
   const handleGoogle = () => {
+    if (!appParams.appBaseUrl) {
+      toast({
+        title: "Google login is not configured",
+        description: "Set VITE_BASE44_APP_BASE_URL or run the app with base44 dev.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     db.auth.loginWithProvider("google", "/");
   };
 
