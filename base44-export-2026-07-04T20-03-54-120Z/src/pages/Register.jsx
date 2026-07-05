@@ -14,6 +14,7 @@ import { toast } from "@/components/ui/use-toast";
 import { appParams } from "@/lib/app-params";
 
 export default function Register() {
+  const basePath = import.meta.env.BASE_URL || "/";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -48,7 +49,7 @@ export default function Register() {
       if (result?.access_token) {
         db.auth.setToken(result.access_token);
       }
-      window.location.href = "/";
+      window.location.href = basePath;
     } catch (err) {
       setError(err.message || "Invalid verification code");
     } finally {
@@ -79,7 +80,7 @@ export default function Register() {
       return;
     }
 
-    db.auth.loginWithProvider("google", "/");
+    db.auth.loginWithProvider("google", basePath);
   };
 
   if (showOtp) {

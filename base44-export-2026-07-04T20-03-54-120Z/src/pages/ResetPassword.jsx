@@ -10,6 +10,7 @@ import { Lock, Loader2, AlertTriangle } from "lucide-react";
 import AuthLayout from "@/components/AuthLayout";
 
 export default function ResetPassword() {
+  const basePath = import.meta.env.BASE_URL || "/";
   const [searchParams] = useSearchParams();
   const resetToken = searchParams.get("token");
 
@@ -28,7 +29,7 @@ export default function ResetPassword() {
     setLoading(true);
     try {
       await db.auth.resetPassword({ resetToken, newPassword });
-      window.location.href = "/login";
+      window.location.href = `${basePath}login`;
     } catch (err) {
       setError(err.message || "Failed to reset password");
     } finally {

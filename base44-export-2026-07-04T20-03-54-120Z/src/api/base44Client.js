@@ -89,7 +89,8 @@ const fallbackClient = {
     loginWithProvider: () => {},
     redirectToLogin: () => {
       if (typeof window !== 'undefined') {
-        window.location.href = '/login'
+        const basePath = import.meta.env.BASE_URL || '/'
+        window.location.href = `${basePath}login`
       }
     },
     logout: () => {},

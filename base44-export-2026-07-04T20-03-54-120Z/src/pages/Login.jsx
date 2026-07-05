@@ -13,6 +13,7 @@ import { appParams } from "@/lib/app-params";
 import { toast } from "@/components/ui/use-toast";
 
 export default function Login() {
+  const basePath = import.meta.env.BASE_URL || "/";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -24,7 +25,7 @@ export default function Login() {
     setLoading(true);
     try {
       await db.auth.loginViaEmailPassword(email, password);
-      window.location.href = "/";
+      window.location.href = basePath;
     } catch (err) {
       setError(err.message || "Invalid email or password");
     } finally {
@@ -42,7 +43,7 @@ export default function Login() {
       return;
     }
 
-    db.auth.loginWithProvider("google", "/");
+    db.auth.loginWithProvider("google", basePath);
   };
 
   return (

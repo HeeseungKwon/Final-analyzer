@@ -16,6 +16,8 @@ import Parlays from '@/pages/Parlays';
 import Review from '@/pages/Review';
 import Excluded from '@/pages/Excluded';
 
+const routerBase = import.meta.env.BASE_URL || '/';
+
 const FatalAppState = ({ title, message, actionLabel, onAction }) => (
   <div className="fixed inset-0 flex items-center justify-center p-6 bg-background">
     <div className="max-w-md w-full rounded-2xl border border-border bg-card p-8 shadow-sm text-center">
@@ -83,7 +85,7 @@ function App() {
   return (
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
-        <Router>
+        <Router basename={routerBase}>
           <ScrollToTop />
           <AuthenticatedApp />
         </Router>
