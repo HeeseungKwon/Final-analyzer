@@ -1,7 +1,6 @@
 // Probability-model scoring for MLB player props
 
 export const MARKET_LABELS = {
-  hit_1: "1+ Hit",
   hit_2: "2+ Hits",
   hrr: "Hits+Runs+RBIs 1.5",
   total_bases: "Total Bases 1.5",
@@ -10,7 +9,6 @@ export const MARKET_LABELS = {
 };
 
 export const MARKET_PROJECTION_UNIT = {
-  hit_1: { unit: "probability", label: "P(1+ hit)", description: "Probability the hitter records at least 1 hit." },
   hit_2: { unit: "probability", label: "P(2+ hits)", description: "Probability the hitter records 2 or more hits." },
   home_run: { unit: "probability", label: "P(HR)", description: "Probability the hitter hits at least 1 home run." },
   total_bases: { unit: "count", label: "Exp. total bases", description: "Expected total bases (1B=1, 2B=2, 3B=3, HR=4). Line = 1.5." },
@@ -182,25 +180,6 @@ export function scoreHitter(name, ctx) {
   const triggerStrength = clamp((contactMult - 1) * 1.7 + (pitcherHrMult - 1) * 1.4 + recentHrDelta * 2.4, -1, 1);
 
   {
-    const p = 1 - Math.pow(1 - hitRateAdj, expectedAB);
-    const floor = 1 - Math.pow(1 - clamp(hitRateAdj * 0.9, 0.08, 0.5), Math.max(1, expectedAB - 1));
-    const ceiling = 1 - Math.pow(1 - clamp(hitRateAdj * 1.1, 0.08, 0.55), expectedAB + 1);
-    out.push({
-      market: "hit_1",
-      confidence: toConfidence(p, 0.64, 120),
-      projection: p,
-      floor,
-      ceiling,
-      trigger,
-      triggerStrength,
-      features: baseFeatures(ctx, { hitPerAB, hitRateAdj, expectedAB, pOverLine: p }),
-      dataQuality: dqBase,
-      recommended: false,
-      recScore: 0,
-    });
-  }
-
-  {
     const p = binomAtLeast(expectedAB, hitRateAdj, 2);
     const floor = binomAtLeast(Math.max(1, expectedAB - 1), clamp(hitRateAdj * 0.9, 0.08, 0.5), 2);
     const ceiling = binomAtLeast(expectedAB + 1, clamp(hitRateAdj * 1.1, 0.08, 0.55), 2);
@@ -311,7 +290,7 @@ export function scoreHitter(name, ctx) {
   }
 
   for (const s of out) {
-    const pOver = s.features?.pOverLine ?? (s.market === "hit_1" || s.market === "hit_2" || s.market === "home_run" ? s.projection : 0.5);
+    const pOver = s.features?.pOverLine ?? (s.market === "hit_2" || s.market === "home_run" ? s.projection : 0.5);
     if (s.market === "home_run") {
       const liftVsPark = s.features?.liftVsPark ?? 0;
       const certainty = Math.max(0, 1 - (s.ceiling - s.floor) * 3.5);

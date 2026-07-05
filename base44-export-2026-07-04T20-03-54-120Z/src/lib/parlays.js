@@ -80,8 +80,6 @@ function splitPredictionsByTimeWindow(predictions) {
  */
 function legProbabilityFor(p) {
   switch (p.market) {
-    case "hit_1":
-      return clamp(0.55 * p.floor + 0.45 * p.projection, 0, 1);
     case "hit_2":
       return clamp(0.5 * p.floor + 0.5 * p.projection, 0, 1);
     case "home_run":
@@ -261,7 +259,7 @@ export function buildParlays(predictions) {
     const usedPlayers = new Set();
 
     const candsA = ranked.filter(
-      (p) => ["hit_1", "hrr", "strikeouts", "total_bases"].includes(p.market) && p._legProb >= 0.48
+      (p) => ["hrr", "strikeouts", "total_bases"].includes(p.market) && p._legProb >= 0.48
     );
     const legsA = pickTierMix(
       candsA,

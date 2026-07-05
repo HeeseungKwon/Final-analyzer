@@ -16,7 +16,6 @@ import { useToast } from "@/components/ui/use-toast";
 
 const MARKETS = [
   { key: "all", label: "All" },
-  { key: "hit_1", label: "1+ Hit" },
   { key: "hit_2", label: "2+ Hits" },
   { key: "hrr", label: "HRR" },
   { key: "total_bases", label: "Total Bases" },
@@ -25,7 +24,6 @@ const MARKETS = [
 ];
 
 const PROJECTION_UNITS = {
-  hit_1: { label: "P(1+ hit)", unit: "probability", description: "Probability of ≥1 hit." },
   hit_2: { label: "P(2+ hits)", unit: "probability", description: "Probability of ≥2 hits." },
   home_run: { label: "P(HR)", unit: "probability", description: "Probability of ≥1 home run." },
   total_bases: { label: "Exp. total bases", unit: "count", description: "Expected total bases (line 1.5)." },

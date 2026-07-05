@@ -11,7 +11,6 @@
  * Used to identify and filter different prop markets in predictions and parlays
  */
 export const MARKET_KEYS = {
-  HIT_1: 'hit_1',
   HIT_2: 'hit_2',
   HRR: 'hrr',
   TOTAL_BASES: 'total_bases',
@@ -24,7 +23,6 @@ export const MARKET_KEYS = {
  * Maps market keys to display-friendly names for UI rendering
  */
 export const MARKET_LABELS = {
-  hit_1: '1+ Hit',
   hit_2: '2+ Hits',
   hrr: 'Hits+Runs+RBIs 1.5',
   total_bases: 'Total Bases 1.5',
@@ -37,7 +35,6 @@ export const MARKET_LABELS = {
  * Used in places where space is limited
  */
 export const MARKET_SHORT_LABELS = {
-  hit_1: '1+ Hit',
   hit_2: '2+ Hits',
   hrr: 'HRR 1.5',
   total_bases: 'TB 1.5',
@@ -51,11 +48,6 @@ export const MARKET_SHORT_LABELS = {
  * user-facing descriptions for context
  */
 export const MARKET_PROJECTION_UNIT = {
-  hit_1: {
-    unit: 'probability',
-    label: 'P(1+ hit)',
-    description: 'Probability the hitter records at least 1 hit.',
-  },
   hit_2: {
     unit: 'probability',
     label: 'P(2+ hits)',
@@ -89,7 +81,6 @@ export const MARKET_PROJECTION_UNIT = {
  */
 export const MARKETS_FOR_FILTERS = [
   { key: 'all', label: 'All' },
-  { key: 'hit_1', label: '1+ Hit' },
   { key: 'hit_2', label: '2+ Hits' },
   { key: 'hrr', label: 'HRR' },
   { key: 'total_bases', label: 'Total Bases' },

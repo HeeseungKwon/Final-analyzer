@@ -22,7 +22,6 @@ function evaluateHitterMarket(market, batting) {
   const singles = Math.max(0, hits - doubles - triples - hr);
   const tb = singles + doubles * 2 + triples * 3 + hr * 4;
   switch (market) {
-    case "hit_1": return hits >= 1;
     case "hit_2": return hits >= 2;
     case "hrr": return hits + runs + rbi >= 2;
     case "total_bases": return tb >= 2;

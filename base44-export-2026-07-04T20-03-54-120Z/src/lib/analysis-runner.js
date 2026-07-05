@@ -16,7 +16,6 @@ import { scoreHitter, scorePitcher, parkFactorFor } from "@/lib/scoring";
 import { scoreHitterLegacy, scorePitcherLegacy } from "@/lib/scoring-legacy";
 
 const MARKET_LIMITS = {
-  hit_1: 18,
   hit_2: 10,
   hrr: 12,
   total_bases: 12,
@@ -25,7 +24,6 @@ const MARKET_LIMITS = {
 };
 
 const MARKET_MIN_CONFIDENCE = {
-  hit_1: 55,
   hit_2: 57,
   hrr: 55,
   total_bases: 55,
@@ -34,7 +32,6 @@ const MARKET_MIN_CONFIDENCE = {
 };
 
 const MARKET_TRUST_BONUS = {
-  hit_1: 8,
   strikeouts: 8,
   total_bases: 5,
   hrr: 4,
@@ -49,7 +46,6 @@ const PORTFOLIO_STYLE_WEIGHTS = {
 };
 
 const MARKET_POPULARITY = {
-  hit_1: 1.0,
   strikeouts: 0.9,
   hrr: 0.82,
   total_bases: 0.78,
@@ -58,7 +54,6 @@ const MARKET_POPULARITY = {
 };
 
 const CONSENSUS_THRESHOLD = {
-  hit_1: 60,
   hit_2: 62,
   hrr: 61,
   total_bases: 60,
@@ -112,9 +107,9 @@ function styleForPortfolio(row) {
   }
 
   if (
-    (row.market === "hit_1" || row.market === "strikeouts") &&
+    (row.market === "strikeouts") &&
     (row.confidence ?? 0) >= 72 &&
-    spread <= (row.market === "strikeouts" ? 3.2 : 0.28)
+    spread <= 3.2
   ) {
     return "conservative";
   }
@@ -210,7 +205,7 @@ function expectedPAForBattingOrder(order) {
 function projectionDistance(a, b, market) {
   const x = Number(a ?? 0);
   const y = Number(b ?? 0);
-  if (market === "home_run" || market === "hit_1" || market === "hit_2") {
+  if (market === "home_run" || market === "hit_2") {
     return Math.min(1, Math.abs(x - y) / 0.22);
   }
   if (market === "strikeouts") {

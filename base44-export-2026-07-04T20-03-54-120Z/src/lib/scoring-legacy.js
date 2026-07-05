@@ -87,17 +87,6 @@ export function scoreHitterLegacy(name, ctx) {
   const triggerStrength = Math.max(-1, Math.min(1, (matchupMult - 1) * 2 + formDelta));
 
   {
-    const p = 1 - Math.pow(1 - adjAvg, expectedAB);
-    const floor = 1 - Math.pow(1 - adjAvg * 0.85, expectedAB - 1);
-    const ceiling = 1 - Math.pow(1 - adjAvg * 1.15, expectedAB + 1);
-    out.push({
-      market: "hit_1", confidence: toConfidence(p, 0.65, 130), projection: p,
-      floor, ceiling, trigger, triggerStrength,
-      features: baseFeatures(ctx, { avg, adjAvg, expectedAB, oppK, matchupMult }),
-      dataQuality: dqBase, recommended: false, recScore: 0,
-    });
-  }
-  {
     const p = binomAtLeast(expectedAB, adjAvg, 2);
     const floor = binomAtLeast(expectedAB - 1, adjAvg * 0.85, 2);
     const ceiling = binomAtLeast(expectedAB + 1, adjAvg * 1.15, 2);
