@@ -16,21 +16,21 @@ import { useToast } from "@/components/ui/use-toast";
 
 const MARKETS = [
   { key: "all", label: "All" },
-  { key: "hit_1", label: "1+ Hit" },
   { key: "hit_2", label: "2+ Hits" },
-  { key: "hrr", label: "HRR" },
+  { key: "hrr_2", label: "HRR 2.5" },
+  { key: "hrr_3", label: "HRR 3.5" },
   { key: "total_bases", label: "Total Bases" },
   { key: "home_run", label: "Home Run" },
   { key: "strikeouts", label: "Strikeouts" },
 ];
 
 const PROJECTION_UNITS = {
-  hit_1: { label: "P(1+ hit)", unit: "probability", description: "Probability of ≥1 hit." },
   hit_2: { label: "P(2+ hits)", unit: "probability", description: "Probability of ≥2 hits." },
   home_run: { label: "P(HR)", unit: "probability", description: "Probability of ≥1 home run." },
-  total_bases: { label: "Exp. total bases", unit: "count", description: "Expected total bases (line 1.5)." },
-  hrr: { label: "Exp. H+R+RBI", unit: "count", description: "Expected Hits+Runs+RBIs (line 1.5)." },
-  strikeouts: { label: "Exp. K", unit: "count", description: "Expected strikeouts for the pitcher (line 5.5)." },
+  total_bases: { label: "Exp. total bases", unit: "count", description: "Expected total bases (line 2.5)." },
+  hrr_2: { label: "Exp. H+R+RBI", unit: "count", description: "Expected Hits+Runs+RBIs (line 2.5)." },
+  hrr_3: { label: "Exp. H+R+RBI", unit: "count", description: "Expected Hits+Runs+RBIs (line 3.5)." },
+  strikeouts: { label: "Exp. K", unit: "count", description: "Expected strikeouts for the pitcher (line 6.5)." },
 };
 
 function todayStr() {

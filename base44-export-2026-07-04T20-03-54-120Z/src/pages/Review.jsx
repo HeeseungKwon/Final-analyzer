@@ -18,9 +18,9 @@ import BucketBar from "@/components/mlb/BucketBar";
 import PicksReviewTable from "@/components/mlb/PicksReviewTable";
 
 const MARKET_LABEL = {
-  hit_1: "1+ Hit",
   hit_2: "2+ Hits",
-  hrr: "HRR",
+  hrr_2: "HRR 2.5",
+  hrr_3: "HRR 3.5",
   total_bases: "Total Bases",
   home_run: "Home Run",
   strikeouts: "Strikeouts",

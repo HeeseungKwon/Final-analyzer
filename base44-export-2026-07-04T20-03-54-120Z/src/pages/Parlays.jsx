@@ -12,12 +12,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { buildParlays, buildHRParlays } from "@/lib/parlays";
 
 const MARKET_SHORT = {
-  hit_1: "1+ Hit",
   hit_2: "2+ Hits",
-  hrr: "HRR 1.5",
-  total_bases: "TB 1.5",
+  hrr_2: "HRR 2.5",
+  hrr_3: "HRR 3.5",
+  total_bases: "TB 2.5",
   home_run: "HR",
-  strikeouts: "K 5.5",
+  strikeouts: "K 6.5",
 };
 
 function todayStr() {
@@ -202,7 +202,7 @@ export default function Parlays() {
                           <TableCell className="text-xs text-muted-foreground">{p.team_name}</TableCell>
                           <TableCell>{MARKET_SHORT[p.market] ?? p.market}</TableCell>
                           <TableCell className="text-right tabular-nums">
-                            {p.market === "home_run" || p.market === "hit_1" || p.market === "hit_2"
+                            {p.market === "home_run" || p.market === "hit_2"
                               ? `${(p.projection * 100).toFixed(1)}%`
                               : Number(p.projection).toFixed(2)}
                           </TableCell>

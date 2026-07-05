@@ -1,21 +1,21 @@
 // Probability-model scoring for MLB player props
 
 export const MARKET_LABELS = {
-  hit_1: "1+ Hit",
   hit_2: "2+ Hits",
-  hrr: "Hits+Runs+RBIs 1.5",
-  total_bases: "Total Bases 1.5",
+  hrr_2: "Hits+Runs+RBIs 2.5",
+  hrr_3: "Hits+Runs+RBIs 3.5",
+  total_bases: "Total Bases 2.5",
   home_run: "Home Run",
-  strikeouts: "Strikeouts 5.5",
+  strikeouts: "Strikeouts 6.5",
 };
 
 export const MARKET_PROJECTION_UNIT = {
-  hit_1: { unit: "probability", label: "P(1+ hit)", description: "Probability the hitter records at least 1 hit." },
   hit_2: { unit: "probability", label: "P(2+ hits)", description: "Probability the hitter records 2 or more hits." },
   home_run: { unit: "probability", label: "P(HR)", description: "Probability the hitter hits at least 1 home run." },
-  total_bases: { unit: "count", label: "Exp. total bases", description: "Expected total bases (1B=1, 2B=2, 3B=3, HR=4). Line = 1.5." },
-  hrr: { unit: "count", label: "Exp. H+R+RBI", description: "Expected Hits + Runs + RBIs combined. Line = 1.5." },
-  strikeouts: { unit: "count", label: "Exp. K", description: "Expected strikeouts for the starting pitcher. Line = 5.5." },
+  total_bases: { unit: "count", label: "Exp. total bases", description: "Expected total bases (1B=1, 2B=2, 3B=3, HR=4). Line = 2.5." },
+  hrr_2: { unit: "count", label: "Exp. H+R+RBI", description: "Expected Hits + Runs + RBIs combined. Line = 2.5." },
+  hrr_3: { unit: "count", label: "Exp. H+R+RBI", description: "Expected Hits + Runs + RBIs combined. Line = 3.5." },
+  strikeouts: { unit: "count", label: "Exp. K", description: "Expected strikeouts for the starting pitcher. Line = 6.5." },
 };
 
 const LEAGUE = {
@@ -182,25 +182,6 @@ export function scoreHitter(name, ctx) {
   const triggerStrength = clamp((contactMult - 1) * 1.7 + (pitcherHrMult - 1) * 1.4 + recentHrDelta * 2.4, -1, 1);
 
   {
-    const p = 1 - Math.pow(1 - hitRateAdj, expectedAB);
-    const floor = 1 - Math.pow(1 - clamp(hitRateAdj * 0.9, 0.08, 0.5), Math.max(1, expectedAB - 1));
-    const ceiling = 1 - Math.pow(1 - clamp(hitRateAdj * 1.1, 0.08, 0.55), expectedAB + 1);
-    out.push({
-      market: "hit_1",
-      confidence: toConfidence(p, 0.64, 120),
-      projection: p,
-      floor,
-      ceiling,
-      trigger,
-      triggerStrength,
-      features: baseFeatures(ctx, { hitPerAB, hitRateAdj, expectedAB, pOverLine: p }),
-      dataQuality: dqBase,
-      recommended: false,
-      recScore: 0,
-    });
-  }
-
-  {
     const p = binomAtLeast(expectedAB, hitRateAdj, 2);
     const floor = binomAtLeast(Math.max(1, expectedAB - 1), clamp(hitRateAdj * 0.9, 0.08, 0.5), 2);
     const ceiling = binomAtLeast(expectedAB + 1, clamp(hitRateAdj * 1.1, 0.08, 0.55), 2);
@@ -276,10 +257,10 @@ export function scoreHitter(name, ctx) {
 
   {
     const lambda = tbPerPAAdj * expectedPA;
-    const pOver = poissonAtLeast(lambda, 2);
+    const pOver = poissonAtLeast(lambda, 3);
     out.push({
       market: "total_bases",
-      confidence: toConfidence(pOver, 0.5, 140),
+      confidence: toConfidence(pOver, 0.35, 150),
       projection: lambda,
       floor: lambda * 0.72,
       ceiling: lambda * 1.28,
@@ -294,16 +275,30 @@ export function scoreHitter(name, ctx) {
 
   {
     const lambda = hrrPerPAAdj * expectedPA;
-    const pOver = poissonAtLeast(lambda, 2);
+    const pOver2 = poissonAtLeast(lambda, 3);
     out.push({
-      market: "hrr",
-      confidence: toConfidence(pOver, 0.5, 140),
+      market: "hrr_2",
+      confidence: toConfidence(pOver2, 0.35, 150),
       projection: lambda,
       floor: lambda * 0.7,
       ceiling: lambda * 1.3,
       trigger,
       triggerStrength,
-      features: baseFeatures(ctx, { hrrPerPA, hrrPerPAAdj, pOverLine: pOver }),
+      features: baseFeatures(ctx, { hrrPerPA, hrrPerPAAdj, pOverLine: pOver2 }),
+      dataQuality: dqBase,
+      recommended: false,
+      recScore: 0,
+    });
+    const pOver3 = poissonAtLeast(lambda, 4);
+    out.push({
+      market: "hrr_3",
+      confidence: toConfidence(pOver3, 0.12, 200),
+      projection: lambda,
+      floor: lambda * 0.7,
+      ceiling: lambda * 1.3,
+      trigger,
+      triggerStrength,
+      features: baseFeatures(ctx, { hrrPerPA, hrrPerPAAdj, pOverLine: pOver3 }),
       dataQuality: dqBase,
       recommended: false,
       recScore: 0,
@@ -311,7 +306,7 @@ export function scoreHitter(name, ctx) {
   }
 
   for (const s of out) {
-    const pOver = s.features?.pOverLine ?? (s.market === "hit_1" || s.market === "hit_2" || s.market === "home_run" ? s.projection : 0.5);
+    const pOver = s.features?.pOverLine ?? (s.market === "hit_2" || s.market === "home_run" ? s.projection : 0.5);
     if (s.market === "home_run") {
       const liftVsPark = s.features?.liftVsPark ?? 0;
       const certainty = Math.max(0, 1 - (s.ceiling - s.floor) * 3.5);
@@ -355,19 +350,19 @@ export function scorePitcher(name, ctx) {
   const expectedIP = ctx.expectedIP ?? clamp((st.gs ?? 0) > 0 ? (st.ip ?? 0) / (st.gs ?? 1) : 5.5, 4.5, 7.0);
   const expectedBF = expectedIP * 4.2;
   const lambdaK = expectedBF * kRateAdj;
-  const pOver = poissonAtLeast(lambdaK, 6);
+  const pOver = poissonAtLeast(lambdaK, 7);
 
   const trigger =
     oppK > leagueK + 0.02
       ? `high-K offense (${(oppK * 100).toFixed(1)}%)`
       : oppK < leagueK - 0.02
         ? `low-K offense (${(oppK * 100).toFixed(1)}%)`
-        : `K model ${(lambdaK).toFixed(2)} vs line 5.5`;
+        : `K model ${(lambdaK).toFixed(2)} vs line 6.5`;
   const triggerStrength = clamp((matchupMult - 1) * 2.2, -1, 1);
 
   const pick = {
     market: "strikeouts",
-    confidence: toConfidence(pOver, 0.5, 160),
+    confidence: toConfidence(pOver, 0.35, 170),
     projection: lambdaK,
     floor: lambdaK * 0.72,
     ceiling: lambdaK * 1.28,

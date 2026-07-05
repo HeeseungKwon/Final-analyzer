@@ -100,7 +100,7 @@ export function computeHRVerdict(modelProb, parkProb, vegasProb, threshold = 0.0
  * 4. Baseline agreement (does Vegas/park support our view?)
  * 
  * @param {Object} prediction - Full prediction object with market, confidence, features, etc.
- * @param {string} market - Market type ('home_run', 'hit_1', etc.)
+ * @param {string} market - Market type ('home_run', 'hit_2', etc.)
  * @param {number} confidence - Model confidence [0, 100]
  * @param {number} floor - 10th percentile projection
  * @param {number} ceiling - 90th percentile projection
