@@ -12,18 +12,18 @@ import { scoreHitter, scorePitcher, parkFactorFor } from "@/lib/scoring";
 import { scoreHitterLegacy, scorePitcherLegacy } from "@/lib/scoring-legacy";
 
 const PORTFOLIO_MARKET_LIMITS = {
-  hit_1: 18,
   hit_2: 10,
-  hrr: 12,
+  hrr_2: 12,
+  hrr_3: 10,
   total_bases: 12,
   home_run: 8,
   strikeouts: 8,
 };
 
 const PORTFOLIO_MIN_CONFIDENCE = {
-  hit_1: 57,
   hit_2: 60,
-  hrr: 58,
+  hrr_2: 58,
+  hrr_3: 55,
   total_bases: 58,
   home_run: 62,
   strikeouts: 60,
@@ -54,10 +54,10 @@ function evaluateHitterMarket(market, batting) {
   const singles = Math.max(0, hits - doubles - triples - hr);
   const tb = singles + doubles * 2 + triples * 3 + hr * 4;
   switch (market) {
-    case "hit_1": return hits >= 1;
     case "hit_2": return hits >= 2;
-    case "hrr": return hits + runs + rbi >= 2;
-    case "total_bases": return tb >= 2;
+    case "hrr_2": return hits + runs + rbi >= 3;
+    case "hrr_3": return hits + runs + rbi >= 4;
+    case "total_bases": return tb >= 3;
     case "home_run": return hr >= 1;
     default: return null;
   }
@@ -65,7 +65,7 @@ function evaluateHitterMarket(market, batting) {
 
 function evaluatePitcherMarket(market, pitching) {
   if (!pitching) return null;
-  if (market === "strikeouts") return (pitching.strikeOuts ?? 0) >= 6;
+  if (market === "strikeouts") return (pitching.strikeOuts ?? 0) >= 7;
   return null;
 }
 

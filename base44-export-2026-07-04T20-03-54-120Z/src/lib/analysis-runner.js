@@ -16,28 +16,28 @@ import { scoreHitter, scorePitcher, parkFactorFor } from "@/lib/scoring";
 import { scoreHitterLegacy, scorePitcherLegacy } from "@/lib/scoring-legacy";
 
 const MARKET_LIMITS = {
-  hit_1: 18,
   hit_2: 10,
-  hrr: 12,
+  hrr_2: 12,
+  hrr_3: 10,
   total_bases: 12,
   home_run: 12,
   strikeouts: 8,
 };
 
 const MARKET_MIN_CONFIDENCE = {
-  hit_1: 55,
   hit_2: 57,
-  hrr: 55,
+  hrr_2: 55,
+  hrr_3: 52,
   total_bases: 55,
   home_run: 58,
   strikeouts: 57,
 };
 
 const MARKET_TRUST_BONUS = {
-  hit_1: 8,
   strikeouts: 8,
   total_bases: 5,
-  hrr: 4,
+  hrr_2: 4,
+  hrr_3: 3,
   home_run: 3,
   hit_2: 2,
 };
@@ -49,18 +49,18 @@ const PORTFOLIO_STYLE_WEIGHTS = {
 };
 
 const MARKET_POPULARITY = {
-  hit_1: 1.0,
   strikeouts: 0.9,
-  hrr: 0.82,
+  hrr_2: 0.82,
+  hrr_3: 0.78,
   total_bases: 0.78,
   hit_2: 0.72,
   home_run: 0.62,
 };
 
 const CONSENSUS_THRESHOLD = {
-  hit_1: 60,
   hit_2: 62,
-  hrr: 61,
+  hrr_2: 61,
+  hrr_3: 61,
   total_bases: 60,
   strikeouts: 61,
   home_run: 54,
@@ -112,7 +112,7 @@ function styleForPortfolio(row) {
   }
 
   if (
-    (row.market === "hit_1" || row.market === "strikeouts") &&
+    (row.market === "strikeouts") &&
     (row.confidence ?? 0) >= 72 &&
     spread <= (row.market === "strikeouts" ? 3.2 : 0.28)
   ) {
@@ -210,7 +210,7 @@ function expectedPAForBattingOrder(order) {
 function projectionDistance(a, b, market) {
   const x = Number(a ?? 0);
   const y = Number(b ?? 0);
-  if (market === "home_run" || market === "hit_1" || market === "hit_2") {
+  if (market === "home_run" || market === "hit_2") {
     return Math.min(1, Math.abs(x - y) / 0.22);
   }
   if (market === "strikeouts") {

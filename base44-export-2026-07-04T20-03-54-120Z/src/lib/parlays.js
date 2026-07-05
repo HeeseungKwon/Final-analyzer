@@ -80,18 +80,18 @@ function splitPredictionsByTimeWindow(predictions) {
  */
 function legProbabilityFor(p) {
   switch (p.market) {
-    case "hit_1":
-      return clamp(0.55 * p.floor + 0.45 * p.projection, 0, 1);
     case "hit_2":
       return clamp(0.5 * p.floor + 0.5 * p.projection, 0, 1);
     case "home_run":
       return clamp(0.7 * p.projection + 0.3 * p.floor, 0, 1);
     case "total_bases":
-      return clamp(smooth((p.projection - 1.5) / 1.2, 0.4, 0.75), 0, 1);
-    case "hrr":
-      return clamp(smooth((p.projection - 1.5) / 1.2, 0.4, 0.75), 0, 1);
+      return clamp(smooth((p.projection - 2.5) / 1.2, 0.35, 0.75), 0, 1);
+    case "hrr_2":
+      return clamp(smooth((p.projection - 2.5) / 1.2, 0.35, 0.75), 0, 1);
+    case "hrr_3":
+      return clamp(smooth((p.projection - 3.5) / 1.2, 0.3, 0.70), 0, 1);
     case "strikeouts":
-      return clamp(smooth((p.projection - 5.5) / 3.0, 0.4, 0.8), 0, 1);
+      return clamp(smooth((p.projection - 6.5) / 3.0, 0.4, 0.8), 0, 1);
     default:
       return 0.5;
   }
@@ -261,7 +261,7 @@ export function buildParlays(predictions) {
     const usedPlayers = new Set();
 
     const candsA = ranked.filter(
-      (p) => ["hit_1", "hrr", "strikeouts", "total_bases"].includes(p.market) && p._legProb >= 0.48
+      (p) => ["hit_2", "hrr_2", "hrr_3", "strikeouts", "total_bases"].includes(p.market) && p._legProb >= 0.48
     );
     const legsA = pickTierMix(
       candsA,
@@ -277,7 +277,7 @@ export function buildParlays(predictions) {
     );
     const parA = assembleParlay(
       `${slot.label} — Core 4-Leg A`,
-      "4 legs from safer profile markets (1+ hit / HRR / K / TB), diversified by game.",
+      "4 legs from safer profile markets (2+ hit / HRR / K / TB), diversified by game.",
       legsA,
       4
     );

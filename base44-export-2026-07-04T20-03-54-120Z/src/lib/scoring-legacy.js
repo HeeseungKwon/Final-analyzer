@@ -87,17 +87,6 @@ export function scoreHitterLegacy(name, ctx) {
   const triggerStrength = Math.max(-1, Math.min(1, (matchupMult - 1) * 2 + formDelta));
 
   {
-    const p = 1 - Math.pow(1 - adjAvg, expectedAB);
-    const floor = 1 - Math.pow(1 - adjAvg * 0.85, expectedAB - 1);
-    const ceiling = 1 - Math.pow(1 - adjAvg * 1.15, expectedAB + 1);
-    out.push({
-      market: "hit_1", confidence: toConfidence(p, 0.65, 130), projection: p,
-      floor, ceiling, trigger, triggerStrength,
-      features: baseFeatures(ctx, { avg, adjAvg, expectedAB, oppK, matchupMult }),
-      dataQuality: dqBase, recommended: false, recScore: 0,
-    });
-  }
-  {
     const p = binomAtLeast(expectedAB, adjAvg, 2);
     const floor = binomAtLeast(expectedAB - 1, adjAvg * 0.85, 2);
     const ceiling = binomAtLeast(expectedAB + 1, adjAvg * 1.15, 2);
@@ -143,7 +132,7 @@ export function scoreHitterLegacy(name, ctx) {
     const adjTB = tbPerPA * matchupMult;
     const proj = adjTB * ctx.expectedPA;
     out.push({
-      market: "total_bases", confidence: toConfidence(proj / 3, 0.5, 100), projection: proj,
+      market: "total_bases", confidence: toConfidence(proj / 3.5, 0.6, 100), projection: proj,
       floor: proj * 0.7, ceiling: proj * 1.4,
       trigger, triggerStrength,
       features: baseFeatures(ctx, { slg, adjSlg, tbPerPA }),
@@ -153,7 +142,14 @@ export function scoreHitterLegacy(name, ctx) {
   {
     const proj = adjHrr * ctx.expectedPA;
     out.push({
-      market: "hrr", confidence: toConfidence(proj / 3, 0.5, 100), projection: proj,
+      market: "hrr_2", confidence: toConfidence(proj / 3.5, 0.6, 100), projection: proj,
+      floor: proj * 0.65, ceiling: proj * 1.45,
+      trigger, triggerStrength,
+      features: baseFeatures(ctx, { hrrRate, adjHrr }),
+      dataQuality: dqBase, recommended: false, recScore: 0,
+    });
+    out.push({
+      market: "hrr_3", confidence: toConfidence(proj / 4.5, 0.5, 100), projection: proj,
       floor: proj * 0.65, ceiling: proj * 1.45,
       trigger, triggerStrength,
       features: baseFeatures(ctx, { hrrRate, adjHrr }),
@@ -209,7 +205,7 @@ export function scorePitcherLegacy(name, ctx) {
   });
 
   for (const s of out) {
-    const recScore = s.confidence * 0.5 + Math.max(0, s.triggerStrength) * 25 + (s.projection >= 5.5 ? 15 : 0);
+    const recScore = s.confidence * 0.5 + Math.max(0, s.triggerStrength) * 25 + (s.projection >= 6.5 ? 15 : 0);
     s.recScore = Math.min(100, recScore);
     s.recommended = s.recScore >= 50 && s.dataQuality !== "missing";
   }
