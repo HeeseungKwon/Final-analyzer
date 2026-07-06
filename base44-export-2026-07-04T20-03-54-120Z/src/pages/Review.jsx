@@ -242,8 +242,13 @@ export default function Review() {
       const stored = localStorage.getItem(DAILY_PARLAYS_KEY);
       const parsed = stored ? JSON.parse(stored) : [];
       setSavedParlays(parsed.map((parlay) => recalculateParlayStatus(parlay)));
-    } catch {
+    } catch (error) {
       setSavedParlays([]);
+      toast({
+        title: "Saved parlays unavailable",
+        description: `Could not read saved parlays from local storage: ${String(error?.message ?? error)}`,
+        variant: "destructive",
+      });
     }
   }
 
@@ -354,8 +359,9 @@ export default function Review() {
 
   const savedParlaySummary = useMemo(() => (
     savedParlays.reduce((acc, parlay) => {
+      const status = ["pending", "inProgress", "won", "lost"].includes(parlay.status) ? parlay.status : "pending";
       acc.total += 1;
-      acc[parlay.status] = (acc[parlay.status] ?? 0) + 1;
+      acc[status] = (acc[status] ?? 0) + 1;
       return acc;
     }, { total: 0, pending: 0, inProgress: 0, won: 0, lost: 0 })
   ), [savedParlays]);
@@ -638,8 +644,8 @@ export default function Review() {
                                 </TableRow>
                               </TableHeader>
                               <TableBody>
-                                {parlay.legs.map((leg) => (
-                                  <TableRow key={`${parlay.id}-${leg.predictionId ?? `${leg.playerId}-${leg.market}`}`}>
+                                {parlay.legs.map((leg, legIndex) => (
+                                  <TableRow key={`${parlay.id}-${leg.predictionId ?? leg.playerId ?? leg.player_id ?? legIndex}-${leg.market}`}>
                                     <TableCell className="font-medium">
                                       {leg.player}
                                       {leg.teamName && (
