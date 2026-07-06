@@ -18,7 +18,7 @@ function normalizeLeg(leg = {}) {
 function datesMatch(parlay, pick) {
   const parlayDate = parlay?.gameDate ?? null;
   const pickDate = pick?.game_date ?? pick?.gameDate ?? null;
-  if (!parlayDate || !pickDate) return true;
+  if (!parlayDate || !pickDate) return false;
   return parlayDate === pickDate;
 }
 
@@ -96,8 +96,21 @@ export function recalculateParlayStatus(parlay) {
 
 export function syncParlayWithResults(parlay, gameResults = []) {
   const nextLegs = (parlay?.legs ?? []).map((leg) => {
-    const match = gameResults.find((pick) => datesMatch(parlay, pick) && legMatchesPick(leg, pick));
-    if (!match || match.graded !== true) {
+    const match = gameResults.find((pick) => {
+      if (leg?.predictionId != null && pick?.id != null && leg.predictionId === pick.id) {
+        return true;
+      }
+
+      const legGamePk = leg?.gamePk ?? null;
+      const pickGamePk = pick?.game_pk ?? pick?.gamePk ?? null;
+      if (legGamePk != null && pickGamePk != null) {
+        return legGamePk === pickGamePk && legMatchesPick(leg, pick);
+      }
+
+      return datesMatch(parlay, pick) && legMatchesPick(leg, pick);
+    });
+
+    if (!match?.graded) {
       return normalizeLeg(leg);
     }
     return updateLegResult(leg, match.hit === true ? RESULT_HIT : RESULT_MISS);

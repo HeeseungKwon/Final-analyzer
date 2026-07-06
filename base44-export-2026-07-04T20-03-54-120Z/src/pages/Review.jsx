@@ -1,6 +1,6 @@
 const db = globalThis.__B44_DB__ || { auth:{ isAuthenticated: async()=>false, me: async()=>null }, entities:new Proxy({}, { get:()=>({ filter:async()=>[], get:async()=>null, create:async()=>({}), update:async()=>({}), delete:async()=>({}) }) }), integrations:{ Core:{ UploadFile:async()=>({ file_url:'' }) } } };
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import AppShell from "@/components/mlb/AppShell";
@@ -92,6 +92,29 @@ function getSavedParlayStatusClass(status) {
     default:
       return "bg-yellow-100 text-yellow-800 hover:bg-yellow-100";
   }
+}
+
+function savedParlaysEqual(currentParlays, nextParlays) {
+  if (currentParlays.length !== nextParlays.length) return false;
+
+  return currentParlays.every((parlay, index) => {
+    const nextParlay = nextParlays[index];
+    if (!nextParlay) return false;
+    if (
+      parlay.id !== nextParlay.id ||
+      parlay.status !== nextParlay.status ||
+      parlay.completedLegs !== nextParlay.completedLegs ||
+      parlay.pendingLegs !== nextParlay.pendingLegs ||
+      parlay.hitLegs !== nextParlay.hitLegs ||
+      parlay.missLegs !== nextParlay.missLegs ||
+      parlay.totalLegs !== nextParlay.totalLegs ||
+      (parlay.legs?.length ?? 0) !== (nextParlay.legs?.length ?? 0)
+    ) {
+      return false;
+    }
+
+    return (parlay.legs ?? []).every((leg, legIndex) => leg.result === nextParlay.legs?.[legIndex]?.result);
+  });
 }
 
 function buildAccuracyFromPicks(gradedPicks) {
@@ -320,7 +343,7 @@ export default function Review() {
     const gradedPicks = data?.gradedPicks ?? [];
     setSavedParlays((prev) => {
       const synced = syncAllParlays(prev, gradedPicks);
-      if (JSON.stringify(synced) === JSON.stringify(prev)) {
+      if (savedParlaysEqual(prev, synced)) {
         return prev;
       }
       persistSavedParlays(synced);
@@ -333,6 +356,7 @@ export default function Review() {
     acc[parlay.status] = (acc[parlay.status] ?? 0) + 1;
     return acc;
   }, { total: 0, pending: 0, inProgress: 0, won: 0, lost: 0 });
+  const displayedSavedParlays = useMemo(() => savedParlays.slice().reverse(), [savedParlays]);
 
   return (
     <AppShell>
@@ -557,7 +581,7 @@ export default function Review() {
               </div>
             ) : (
               <div className="space-y-4">
-                {[...savedParlays].reverse().map((parlay) => {
+                {displayedSavedParlays.map((parlay) => {
                   const syncStatus = parlaySyncState[parlay.id] ?? {
                     completedLegs: parlay.completedLegs ?? 0,
                     totalLegs: parlay.totalLegs ?? parlay.legs?.length ?? 0,
