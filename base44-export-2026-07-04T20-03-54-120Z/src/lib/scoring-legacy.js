@@ -132,7 +132,7 @@ export function scoreHitterLegacy(name, ctx) {
     const adjTB = tbPerPA * matchupMult;
     const proj = adjTB * ctx.expectedPA;
     out.push({
-      market: "total_bases", confidence: toConfidence(proj / 3.5, 0.6, 100), projection: proj,
+      market: "total_bases", confidence: toConfidence(proj / 2.5, 0.6, 100), projection: proj,
       floor: proj * 0.7, ceiling: proj * 1.4,
       trigger, triggerStrength,
       features: baseFeatures(ctx, { slg, adjSlg, tbPerPA }),
