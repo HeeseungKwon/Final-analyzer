@@ -95,29 +95,12 @@ function legProbabilityFor(p) {
       return clamp(0.5 * p.floor + 0.5 * p.projection, 0, 1);
     case "home_run":
       return clamp(0.7 * p.projection + 0.3 * p.floor, 0, 1);
-<<<<<<< HEAD
     case "total_bases":
       return clamp(smooth((p.projection - 1.5) / 1.2, 0.35, 0.75), 0, 1);
     case "hrr_2":
       return clamp(smooth((p.projection - 2.5) / 1.2, 0.35, 0.75), 0, 1);
     case "hrr_3":
       return clamp(smooth((p.projection - 3.5) / 1.2, 0.3, 0.70), 0, 1);
-=======
-    case "total_bases": {
-      const pOver15 = Number(features.tbOver1_5Prob);
-      if (Number.isFinite(pOver15)) return clamp(pOver15, 0, 1);
-      return clamp(smooth((p.projection - 1.5) / 1.2, 0.4, 0.75), 0, 1);
-    }
-    case "hrr": {
-      const pOver15 = Number(features.hrrOver1_5Prob);
-      const pOver25 = Number(features.hrrOver2_5Prob);
-      if (Number.isFinite(pOver15) && Number.isFinite(pOver25)) {
-        return clamp(pOver15 * 0.72 + pOver25 * 0.28, 0, 1);
-      }
-      if (Number.isFinite(pOver15)) return clamp(pOver15, 0, 1);
-      return clamp(smooth((p.projection - 1.5) / 1.2, 0.4, 0.75), 0, 1);
-    }
->>>>>>> 62b7195 (작업 내용 저장)
     case "strikeouts":
       return clamp(smooth((p.projection - 6.5) / 3.0, 0.4, 0.8), 0, 1);
     default:

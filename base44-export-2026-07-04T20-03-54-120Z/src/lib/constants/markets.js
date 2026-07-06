@@ -25,14 +25,9 @@ export const MARKET_KEYS = {
  */
 export const MARKET_LABELS = {
   hit_2: '2+ Hits',
-<<<<<<< HEAD
   hrr_2: 'Hits+Runs+RBIs 2.5',
   hrr_3: 'Hits+Runs+RBIs 3.5',
   total_bases: 'Total Bases 2.5',
-=======
-  hrr: 'HRR O1.5/O2.5',
-  total_bases: 'TB O1.5',
->>>>>>> 62b7195 (작업 내용 저장)
   home_run: 'Home Run',
   strikeouts: 'Strikeouts 6.5',
 };
@@ -43,14 +38,9 @@ export const MARKET_LABELS = {
  */
 export const MARKET_SHORT_LABELS = {
   hit_2: '2+ Hits',
-<<<<<<< HEAD
   hrr_2: 'HRR 2.5',
   hrr_3: 'HRR 3.5',
   total_bases: 'TB 2.5',
-=======
-  hrr: 'HRR O1.5/O2.5',
-  total_bases: 'TB O1.5',
->>>>>>> 62b7195 (작업 내용 저장)
   home_run: 'HR',
   strikeouts: 'K 6.5',
 };
@@ -74,25 +64,17 @@ export const MARKET_PROJECTION_UNIT = {
   total_bases: {
     unit: 'count',
     label: 'Exp. total bases',
-<<<<<<< HEAD
     description: 'Expected total bases (1B=1, 2B=2, 3B=3, HR=4). Line = 2.5.',
-=======
-    description: 'Expected total bases (1B=1, 2B=2, 3B=3, HR=4). Picks use TB O1.5 probability.',
->>>>>>> 62b7195 (작업 내용 저장)
   },
   hrr_2: {
     unit: 'count',
     label: 'Exp. H+R+RBI',
-<<<<<<< HEAD
     description: 'Expected Hits + Runs + RBIs combined. Line = 2.5.',
   },
   hrr_3: {
     unit: 'count',
     label: 'Exp. H+R+RBI',
     description: 'Expected Hits + Runs + RBIs combined. Line = 3.5.',
-=======
-    description: 'Expected Hits + Runs + RBIs combined. Analyzer computes both HRR O1.5 and O2.5.',
->>>>>>> 62b7195 (작업 내용 저장)
   },
   strikeouts: {
     unit: 'count',
