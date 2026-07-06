@@ -257,7 +257,7 @@ export function scoreHitter(name, ctx) {
 
   {
     const lambda = tbPerPAAdj * expectedPA;
-    const pOver = poissonAtLeast(lambda, 3);
+    const pOver = poissonAtLeast(lambda, 2);
     out.push({
       market: "total_bases",
       confidence: toConfidence(pOver, 0.35, 150),

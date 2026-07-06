@@ -85,7 +85,7 @@ function legProbabilityFor(p) {
     case "home_run":
       return clamp(0.7 * p.projection + 0.3 * p.floor, 0, 1);
     case "total_bases":
-      return clamp(smooth((p.projection - 2.5) / 1.2, 0.35, 0.75), 0, 1);
+      return clamp(smooth((p.projection - 1.5) / 1.2, 0.35, 0.75), 0, 1);
     case "hrr_2":
       return clamp(smooth((p.projection - 2.5) / 1.2, 0.35, 0.75), 0, 1);
     case "hrr_3":
@@ -321,6 +321,37 @@ export function buildParlays(predictions) {
       parlays.push({ ...parB, timeWindow: slot.label });
       for (const l of parB.legs) usedPlayers.add(l.playerId);
     }
+
+    const cands5 = ranked.filter((p) => p._legProb >= 0.48);
+    let legs5 = pickTierMix(
+      cands5,
+      5,
+      [
+        { tier: "s", count: 1 },
+        { tier: "a", count: 2 },
+        { tier: "b", count: 2 },
+      ],
+      { maxPerGame: 2, maxPerPlayer: 1, bannedPlayerIds: usedPlayers }
+    );
+    if (legs5.length < 5) {
+      legs5 = pickTierMix(
+        cands5,
+        5,
+        [
+          { tier: "s", count: 1 },
+          { tier: "a", count: 2 },
+          { tier: "b", count: 2 },
+        ],
+        { maxPerGame: 2, maxPerPlayer: 1 }
+      );
+    }
+    const par5 = assembleParlay(
+      `${slot.label} — 5-Leg`,
+      "5-leg leverage parlay for the same time window.",
+      legs5.map((p) => toLeg(p, `time-window leverage leg (tier ${String(p._tier).toUpperCase()})`)),
+      5
+    );
+    if (par5) parlays.push({ ...par5, timeWindow: slot.label });
 
     const cands6 = ranked.filter((p) => p._legProb >= 0.5);
     let legs6 = pickTierMix(
