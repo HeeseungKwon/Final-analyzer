@@ -22,6 +22,12 @@ const MARKET_SHORT = {
 
 const DAILY_PARLAYS_KEY = "dailyParlays_v1";
 
+let _idSeq = 0;
+function genId(prefix) {
+  _idSeq += 1;
+  return `${prefix}-${Date.now()}-${_idSeq}`;
+}
+
 function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -289,7 +295,7 @@ export default function Parlays() {
     if (selected.length < 2) return;
     const parlay = buildCustomParlayFn(selected, `Custom #${userCustomParlays.length + 1}`);
     if (!parlay) return;
-    const withId = { ...parlay, id: `custom-${Date.now()}-${Math.random().toString(36).substr(2, 6)}` };
+    const withId = { ...parlay, id: genId("custom") };
     setUserCustomParlays((prev) => [...prev, withId]);
     setCustomSelectedPickIds(new Set());
   }
@@ -327,7 +333,7 @@ export default function Parlays() {
       if (selectedAnalyzerParlayNames.has(p.name)) {
         toSave.push({
           ...p,
-          id: `daily-${Date.now()}-${Math.random().toString(36).substr(2, 8)}`,
+          id: genId("daily"),
           savedAt: now,
           status: "pending",
           source: "analyzer",
@@ -339,7 +345,7 @@ export default function Parlays() {
       if (selectedCustomParlayIds.has(p.id)) {
         toSave.push({
           ...p,
-          id: `daily-${Date.now()}-${Math.random().toString(36).substr(2, 8)}`,
+          id: genId("daily"),
           savedAt: now,
           status: "pending",
           source: "custom",

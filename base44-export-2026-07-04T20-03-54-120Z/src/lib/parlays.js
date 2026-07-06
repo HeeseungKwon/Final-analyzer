@@ -286,21 +286,27 @@ export function buildParlays(predictions, selectedGamePks) {
     );
     const legsBPool = [];
     const seenMarketsB = new Set();
+    const seenGamesB = new Set();
+    const seenIdsB = new Set();
     for (const p of marketRanked) {
       if (legsBPool.length >= 4) break;
       if (usedPlayers.has(p.player_id)) continue;
       if (seenMarketsB.has(p.market)) continue;
-      if (legsBPool.some((l) => l.game_pk === p.game_pk)) continue;
+      if (seenGamesB.has(p.game_pk)) continue;
       legsBPool.push(p);
       seenMarketsB.add(p.market);
+      seenGamesB.add(p.game_pk);
+      seenIdsB.add(p.id);
     }
     if (legsBPool.length < 4) {
       for (const p of ranked) {
         if (legsBPool.length >= 4) break;
         if (usedPlayers.has(p.player_id)) continue;
-        if (legsBPool.some((l) => l.id === p.id)) continue;
-        if (legsBPool.some((l) => l.game_pk === p.game_pk)) continue;
+        if (seenIdsB.has(p.id)) continue;
+        if (seenGamesB.has(p.game_pk)) continue;
         legsBPool.push(p);
+        seenGamesB.add(p.game_pk);
+        seenIdsB.add(p.id);
       }
     }
     const legsB = legsBPool.map((p) => toLeg(p, `balanced market mix (tier ${String(p._tier).toUpperCase()})`));
@@ -398,21 +404,27 @@ export function buildParlays(predictions, selectedGamePks) {
 
     const legsBPool = [];
     const seenMarkets = new Set();
+    const seenGamesLegacy = new Set();
+    const seenIdsLegacy = new Set();
     for (const p of marketRanked) {
       if (legsBPool.length >= 4) break;
       if (usedPlayers.has(p.player_id)) continue;
       if (seenMarkets.has(p.market)) continue;
-      if (legsBPool.some((l) => l.game_pk === p.game_pk)) continue;
+      if (seenGamesLegacy.has(p.game_pk)) continue;
       legsBPool.push(p);
       seenMarkets.add(p.market);
+      seenGamesLegacy.add(p.game_pk);
+      seenIdsLegacy.add(p.id);
     }
     if (legsBPool.length < 4) {
       for (const p of ranked) {
         if (legsBPool.length >= 4) break;
         if (usedPlayers.has(p.player_id)) continue;
-        if (legsBPool.some((l) => l.id === p.id)) continue;
-        if (legsBPool.some((l) => l.game_pk === p.game_pk)) continue;
+        if (seenIdsLegacy.has(p.id)) continue;
+        if (seenGamesLegacy.has(p.game_pk)) continue;
         legsBPool.push(p);
+        seenGamesLegacy.add(p.game_pk);
+        seenIdsLegacy.add(p.id);
       }
     }
     const legsB = legsBPool.map((p) => toLeg(p, `time-window balanced market mix (tier ${String(p._tier).toUpperCase()})`));
