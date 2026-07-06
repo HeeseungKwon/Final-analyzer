@@ -83,6 +83,12 @@ export const MARKET_PROJECTION_UNIT = {
   },
 };
 
+export const PROBABILITY_MARKETS = new Set(
+  Object.entries(MARKET_PROJECTION_UNIT)
+    .filter(([, config]) => config.unit === 'probability')
+    .map(([marketKey]) => marketKey)
+);
+
 /**
  * Exported market list for Today page filter tabs
  * Defines the selectable filters available to end users
@@ -134,4 +140,8 @@ export function getMarketLabel(marketKey, variant = 'full') {
  */
 export function getMarketProjectionUnit(marketKey) {
   return MARKET_PROJECTION_UNIT[normalizeMarketKey(marketKey)] ?? null;
+}
+
+export function isProbabilityMarket(marketKey) {
+  return PROBABILITY_MARKETS.has(normalizeMarketKey(marketKey));
 }

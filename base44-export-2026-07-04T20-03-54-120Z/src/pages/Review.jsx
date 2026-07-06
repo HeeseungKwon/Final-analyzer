@@ -13,7 +13,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { gradeAllUngraded } from "@/lib/grading";
 import { buildParlays, buildHRParlays } from "@/lib/parlays";
 import { runOneTimeABComparison } from "@/lib/ab-comparison";
-import { getMarketLabel } from "@/lib/constants/markets";
+import { getMarketLabel, isProbabilityMarket } from "@/lib/constants/markets";
 import BucketBar from "@/components/mlb/BucketBar";
 import PicksReviewTable from "@/components/mlb/PicksReviewTable";
 import { recalculateParlayStatus, syncAllParlays } from "@/lib/utils/parlaySync";
@@ -42,7 +42,7 @@ function formatSavedAt(isoStr) {
 
 function formatLegProjection(leg) {
   if (leg?.projection == null) return "—";
-  if (["home_run", "hit_2", "total_bases", "hrr_2", "hrr_3"].includes(leg.market)) {
+  if (isProbabilityMarket(leg.market)) {
     return `${(Number(leg.projection) * 100).toFixed(1)}%`;
   }
   return Number(leg.projection).toFixed(2);

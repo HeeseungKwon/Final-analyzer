@@ -27,7 +27,12 @@ const LEAGUE = {
   pitcherHrPerBF: 0.032,
 };
 
-const FRAMEWORK_PROBABILITY_MARKETS = new Set(["hit_1", "hit_2", "home_run"]);
+const FRAMEWORK_PROBABILITY_MARKETS = new Set([
+  "hit_1",
+  ...Object.entries(MARKET_PROJECTION_UNIT)
+    .filter(([, config]) => config.unit === "probability")
+    .map(([marketKey]) => marketKey),
+]);
 
 const ATC_LIKE_WEIGHTS = {
   hit_1: { zips: 0.29, steamer: 0.33, batx: 0.23, pecota: 0.15 },

@@ -108,13 +108,13 @@ function legProbabilityFor(p) {
       return clamp(0.7 * p.projection + 0.3 * p.floor, 0, 1);
     case "total_bases":
       if (projectedProb != null) return clamp(0.7 * projectedProb + 0.3 * (features?.tbOver1_5Prob ?? p.floor), 0, 1);
-      return clamp(smooth((p.projection - 1.5) / 1.2, 0.35, 0.75), 0, 1);
+      return clamp(p.floor, 0, 1);
     case "hrr_2":
       if (projectedProb != null) return clamp(0.7 * projectedProb + 0.3 * (features?.hrrOver1_5Prob ?? p.floor), 0, 1);
-      return clamp(smooth((p.projection - 2.5) / 1.2, 0.35, 0.75), 0, 1);
+      return clamp(p.floor, 0, 1);
     case "hrr_3":
       if (projectedProb != null) return clamp(0.7 * projectedProb + 0.3 * (features?.hrrOver2_5Prob ?? p.floor), 0, 1);
-      return clamp(smooth((p.projection - 3.5) / 1.2, 0.3, 0.70), 0, 1);
+      return clamp(p.floor, 0, 1);
     case "strikeouts":
       return clamp(smooth((p.projection - 6.5) / 3.0, 0.4, 0.8), 0, 1);
     default:

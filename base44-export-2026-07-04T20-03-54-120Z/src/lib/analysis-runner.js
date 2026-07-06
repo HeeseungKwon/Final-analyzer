@@ -14,6 +14,7 @@ import {
 } from "@/lib/mlb-api";
 import { scoreHitter, scorePitcher, parkFactorFor } from "@/lib/scoring";
 import { scoreHitterLegacy, scorePitcherLegacy } from "@/lib/scoring-legacy";
+import { isProbabilityMarket } from "@/lib/constants/markets";
 
 const MARKET_LIMITS = {
   hit_2: 10,
@@ -224,7 +225,7 @@ function expectedPAForBattingOrder(order) {
 function projectionDistance(a, b, market) {
   const x = Number(a ?? 0);
   const y = Number(b ?? 0);
-  if (["home_run", "hit_2", "total_bases", "hrr_2", "hrr_3"].includes(market)) {
+  if (isProbabilityMarket(market)) {
     return Math.min(1, Math.abs(x - y) / 0.22);
   }
   if (market === "strikeouts") {
