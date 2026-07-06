@@ -11,15 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { buildParlays, buildHRParlays, buildCustomParlay as buildCustomParlayFn } from "@/lib/parlays";
 import { recalculateParlayStatus } from "@/lib/utils/parlaySync";
-
-const MARKET_SHORT = {
-  hit_2: "2+ Hits",
-  hrr_2: "HRR 2.5",
-  hrr_3: "HRR 3.5",
-  total_bases: "TB 2.5",
-  home_run: "HR",
-  strikeouts: "K 6.5",
-};
+import { getMarketLabel } from "@/lib/constants/markets";
 
 const DAILY_PARLAYS_KEY = "dailyParlays_v1";
 
@@ -96,7 +88,7 @@ function ParlayCard({ parlay, selectable, selected, onToggle, onDelete }) {
                     {l.player}
                     {l.teamName && <span className="ml-2 text-xs font-normal text-muted-foreground">({l.teamName})</span>}
                   </TableCell>
-                  <TableCell>{MARKET_SHORT[l.market] ?? l.market}</TableCell>
+                  <TableCell>{getMarketLabel(l.market, "short")}</TableCell>
                   <TableCell className="text-right tabular-nums">{(l.legProb * 100).toFixed(1)}%</TableCell>
                   <TableCell className="text-right tabular-nums">{Number(l.confidence).toFixed(0)}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{l.reason}</TableCell>
@@ -404,7 +396,7 @@ export default function Parlays() {
                                 </TableCell>
                                 <TableCell className="font-medium">{p.player_name}</TableCell>
                                 <TableCell className="text-xs text-muted-foreground">{p.team_name}</TableCell>
-                                <TableCell>{MARKET_SHORT[p.market] ?? p.market}</TableCell>
+                                <TableCell>{getMarketLabel(p.market, "short")}</TableCell>
                                 <TableCell className="text-right tabular-nums">{Number(p.confidence).toFixed(0)}</TableCell>
                                 <TableCell className="text-right tabular-nums">
                                   {p.market === "home_run" || p.market === "hit_2"

@@ -105,7 +105,7 @@ function styleForPortfolio(row) {
   if (
     row.market === "home_run" ||
     row.market === "hit_2" ||
-    (row.market === "total_bases" && spread > 1.1) ||
+    (["total_bases", "hrr_2", "hrr_3"].includes(row.market) && spread > 0.18) ||
     (Number.isFinite(pOver) && pOver < 0.58)
   ) {
     return "aggressive";
@@ -127,7 +127,7 @@ function rebalanceRecommendations(rows) {
   const TARGET_UNIQUE_PLAYERS = 50;
   const MAX_PER_PLAYER = 1;
   const MAX_PER_GAME = 6;
-  const POWER_MARKETS = new Set(["home_run", "hrr", "total_bases"]);
+  const POWER_MARKETS = new Set(["home_run", "hrr_2", "hrr_3", "total_bases"]);
 
   const candidates = rows
     .map((row, idx) => ({
@@ -224,7 +224,7 @@ function expectedPAForBattingOrder(order) {
 function projectionDistance(a, b, market) {
   const x = Number(a ?? 0);
   const y = Number(b ?? 0);
-  if (market === "home_run" || market === "hit_2") {
+  if (["home_run", "hit_2", "total_bases", "hrr_2", "hrr_3"].includes(market)) {
     return Math.min(1, Math.abs(x - y) / 0.22);
   }
   if (market === "strikeouts") {

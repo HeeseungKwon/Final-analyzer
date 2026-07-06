@@ -13,25 +13,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { runAnalysis } from "@/lib/analysis-runner";
 import { useToast } from "@/components/ui/use-toast";
-
-const MARKETS = [
-  { key: "all", label: "All" },
-  { key: "hit_2", label: "2+ Hits" },
-  { key: "hrr_2", label: "HRR 2.5" },
-  { key: "hrr_3", label: "HRR 3.5" },
-  { key: "total_bases", label: "Total Bases" },
-  { key: "home_run", label: "Home Run" },
-  { key: "strikeouts", label: "Strikeouts" },
-];
-
-const PROJECTION_UNITS = {
-  hit_2: { label: "P(2+ hits)", unit: "probability", description: "Probability of ≥2 hits." },
-  home_run: { label: "P(HR)", unit: "probability", description: "Probability of ≥1 home run." },
-  total_bases: { label: "Exp. total bases", unit: "count", description: "Expected total bases (line 2.5)." },
-  hrr_2: { label: "Exp. H+R+RBI", unit: "count", description: "Expected Hits+Runs+RBIs (line 2.5)." },
-  hrr_3: { label: "Exp. H+R+RBI", unit: "count", description: "Expected Hits+Runs+RBIs (line 3.5)." },
-  strikeouts: { label: "Exp. K", unit: "count", description: "Expected strikeouts for the pitcher (line 6.5)." },
-};
+import { MARKETS_FOR_FILTERS, getMarketProjectionUnit } from "@/lib/constants/markets";
 
 function todayStr() {
   const d = new Date();
@@ -115,7 +97,7 @@ export default function Today() {
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Tabs value={market} onValueChange={setMarket}>
           <TabsList>
-            {MARKETS.map((m) => (
+            {MARKETS_FOR_FILTERS.map((m) => (
               <TabsTrigger key={m.key} value={m.key}>{m.label}</TabsTrigger>
             ))}
           </TabsList>
@@ -128,11 +110,11 @@ export default function Today() {
         </div>
       </div>
 
-      {market !== "all" && PROJECTION_UNITS[market] && (
+      {market !== "all" && getMarketProjectionUnit(market) && (
         <div className="mb-4 rounded border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          <b className="text-foreground">Proj</b> = {PROJECTION_UNITS[market].label} —{" "}
-          {PROJECTION_UNITS[market].description}{" "}
-          {PROJECTION_UNITS[market].unit === "probability"
+          <b className="text-foreground">Proj</b> = {getMarketProjectionUnit(market).label} —{" "}
+          {getMarketProjectionUnit(market).description}{" "}
+          {getMarketProjectionUnit(market).unit === "probability"
             ? "Values are 0.000–1.000 (multiply by 100 for %)."
             : "Values are expected counts."}{" "}
           <b className="text-foreground">Floor</b> / <b className="text-foreground">Ceiling</b> are the same unit (10th/90th-percentile band).{" "}
@@ -183,7 +165,7 @@ export default function Today() {
                             <TableHead>Player</TableHead>
                             <TableHead>Market</TableHead>
                             <TableHead className="text-right">
-                              Proj{market !== "all" && PROJECTION_UNITS[market] ? ` (${PROJECTION_UNITS[market].label})` : ""}
+                              Proj{market !== "all" && getMarketProjectionUnit(market) ? ` (${getMarketProjectionUnit(market).label})` : ""}
                             </TableHead>
                             <TableHead className="text-right">Conf</TableHead>
                             <TableHead>Trigger</TableHead>

@@ -25,9 +25,9 @@ export const MARKET_KEYS = {
  */
 export const MARKET_LABELS = {
   hit_2: '2+ Hits',
-  hrr_2: 'Hits+Runs+RBIs 2.5',
-  hrr_3: 'Hits+Runs+RBIs 3.5',
-  total_bases: 'Total Bases 2.5',
+  hrr_2: 'HRR O1.5',
+  hrr_3: 'HRR O2.5',
+  total_bases: 'TB O1.5',
   home_run: 'Home Run',
   strikeouts: 'Strikeouts 6.5',
 };
@@ -38,9 +38,9 @@ export const MARKET_LABELS = {
  */
 export const MARKET_SHORT_LABELS = {
   hit_2: '2+ Hits',
-  hrr_2: 'HRR 2.5',
-  hrr_3: 'HRR 3.5',
-  total_bases: 'TB 2.5',
+  hrr_2: 'HRR O1.5',
+  hrr_3: 'HRR O2.5',
+  total_bases: 'TB O1.5',
   home_run: 'HR',
   strikeouts: 'K 6.5',
 };
@@ -62,19 +62,19 @@ export const MARKET_PROJECTION_UNIT = {
     description: 'Probability the hitter hits at least 1 home run.',
   },
   total_bases: {
-    unit: 'count',
-    label: 'Exp. total bases',
-    description: 'Expected total bases (1B=1, 2B=2, 3B=3, HR=4). Line = 2.5.',
+    unit: 'probability',
+    label: 'P(TB ≥ 2)',
+    description: 'Probability total bases reach at least 2 for the TB O1.5 benchmark.',
   },
   hrr_2: {
-    unit: 'count',
-    label: 'Exp. H+R+RBI',
-    description: 'Expected Hits + Runs + RBIs combined. Line = 2.5.',
+    unit: 'probability',
+    label: 'P(HRR ≥ 2)',
+    description: 'Probability hits + runs + RBIs reach at least 2 for the HRR O1.5 benchmark.',
   },
   hrr_3: {
-    unit: 'count',
-    label: 'Exp. H+R+RBI',
-    description: 'Expected Hits + Runs + RBIs combined. Line = 3.5.',
+    unit: 'probability',
+    label: 'P(HRR ≥ 3)',
+    description: 'Probability hits + runs + RBIs reach at least 3 for the HRR O2.5 benchmark.',
   },
   strikeouts: {
     unit: 'count',
@@ -90,12 +90,28 @@ export const MARKET_PROJECTION_UNIT = {
 export const MARKETS_FOR_FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'hit_2', label: '2+ Hits' },
-  { key: 'hrr_2', label: 'HRR 2.5' },
-  { key: 'hrr_3', label: 'HRR 3.5' },
-  { key: 'total_bases', label: 'Total Bases' },
+  { key: 'hrr_2', label: 'HRR O1.5' },
+  { key: 'hrr_3', label: 'HRR O2.5' },
+  { key: 'total_bases', label: 'TB O1.5' },
   { key: 'home_run', label: 'Home Run' },
   { key: 'strikeouts', label: 'Strikeouts' },
 ];
+
+const LEGACY_MARKET_ALIASES = {
+  'TB 2.5': 'total_bases',
+  'Total Bases 2.5': 'total_bases',
+  'TB O1.5': 'total_bases',
+  'HRR 2.5': 'hrr_2',
+  'Hits+Runs+RBIs 2.5': 'hrr_2',
+  'HRR O1.5': 'hrr_2',
+  'HRR 3.5': 'hrr_3',
+  'Hits+Runs+RBIs 3.5': 'hrr_3',
+  'HRR O2.5': 'hrr_3',
+};
+
+export function normalizeMarketKey(marketKey) {
+  return LEGACY_MARKET_ALIASES[marketKey] ?? marketKey;
+}
 
 /**
  * Helper function to get market label
@@ -104,10 +120,11 @@ export const MARKETS_FOR_FILTERS = [
  * @returns {string} The market label
  */
 export function getMarketLabel(marketKey, variant = 'full') {
+  const key = normalizeMarketKey(marketKey);
   if (variant === 'short') {
-    return MARKET_SHORT_LABELS[marketKey] ?? marketKey;
+    return MARKET_SHORT_LABELS[key] ?? key;
   }
-  return MARKET_LABELS[marketKey] ?? marketKey;
+  return MARKET_LABELS[key] ?? key;
 }
 
 /**
@@ -116,5 +133,5 @@ export function getMarketLabel(marketKey, variant = 'full') {
  * @returns {object|null} The projection unit specification or null if not found
  */
 export function getMarketProjectionUnit(marketKey) {
-  return MARKET_PROJECTION_UNIT[marketKey] ?? null;
+  return MARKET_PROJECTION_UNIT[normalizeMarketKey(marketKey)] ?? null;
 }

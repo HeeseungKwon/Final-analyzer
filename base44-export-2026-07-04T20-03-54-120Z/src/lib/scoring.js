@@ -2,9 +2,9 @@
 
 export const MARKET_LABELS = {
   hit_2: "2+ Hits",
-  hrr_2: "Hits+Runs+RBIs 2.5",
-  hrr_3: "Hits+Runs+RBIs 3.5",
-  total_bases: "Total Bases 2.5",
+  hrr_2: "HRR O1.5",
+  hrr_3: "HRR O2.5",
+  total_bases: "TB O1.5",
   home_run: "Home Run",
   strikeouts: "Strikeouts 6.5",
 };
@@ -12,9 +12,9 @@ export const MARKET_LABELS = {
 export const MARKET_PROJECTION_UNIT = {
   hit_2: { unit: "probability", label: "P(2+ hits)", description: "Probability the hitter records 2 or more hits." },
   home_run: { unit: "probability", label: "P(HR)", description: "Probability the hitter hits at least 1 home run." },
-  total_bases: { unit: "count", label: "Exp. total bases", description: "Expected total bases (1B=1, 2B=2, 3B=3, HR=4). Line = 2.5." },
-  hrr_2: { unit: "count", label: "Exp. H+R+RBI", description: "Expected Hits + Runs + RBIs combined. Line = 2.5." },
-  hrr_3: { unit: "count", label: "Exp. H+R+RBI", description: "Expected Hits + Runs + RBIs combined. Line = 3.5." },
+  total_bases: { unit: "probability", label: "P(TB ≥ 2)", description: "Probability total bases reach at least 2 for the TB O1.5 line." },
+  hrr_2: { unit: "probability", label: "P(HRR ≥ 2)", description: "Probability hits + runs + RBIs reach at least 2 for the HRR O1.5 line." },
+  hrr_3: { unit: "probability", label: "P(HRR ≥ 3)", description: "Probability hits + runs + RBIs reach at least 3 for the HRR O2.5 line." },
   strikeouts: { unit: "count", label: "Exp. K", description: "Expected strikeouts for the starting pitcher. Line = 6.5." },
 };
 
@@ -27,14 +27,15 @@ const LEAGUE = {
   pitcherHrPerBF: 0.032,
 };
 
-const PROBABILITY_MARKETS = new Set(["hit_1", "hit_2", "home_run"]);
+const FRAMEWORK_PROBABILITY_MARKETS = new Set(["hit_1", "hit_2", "home_run"]);
 
 const ATC_LIKE_WEIGHTS = {
   hit_1: { zips: 0.29, steamer: 0.33, batx: 0.23, pecota: 0.15 },
   hit_2: { zips: 0.28, steamer: 0.34, batx: 0.21, pecota: 0.17 },
   home_run: { zips: 0.2, steamer: 0.27, batx: 0.39, pecota: 0.14 },
   total_bases: { zips: 0.24, steamer: 0.23, batx: 0.37, pecota: 0.16 },
-  hrr: { zips: 0.25, steamer: 0.24, batx: 0.33, pecota: 0.18 },
+  hrr_2: { zips: 0.25, steamer: 0.24, batx: 0.33, pecota: 0.18 },
+  hrr_3: { zips: 0.24, steamer: 0.24, batx: 0.32, pecota: 0.2 },
   strikeouts: { zips: 0.23, steamer: 0.36, batx: 0.21, pecota: 0.2 },
 };
 
@@ -64,7 +65,7 @@ function empiricalBayesRate(successes, trials, priorMean, priorStrength) {
 }
 
 function clampProjection(market, value) {
-  if (PROBABILITY_MARKETS.has(market)) return clamp(value, 0, 1);
+  if (FRAMEWORK_PROBABILITY_MARKETS.has(market)) return clamp(value, 0, 1);
   return clamp(value, 0, 15);
 }
 
@@ -72,8 +73,21 @@ function modelAgreement(market, values) {
   const nums = values.filter((v) => Number.isFinite(v));
   if (nums.length < 2) return 0.5;
   const spread = Math.max(...nums) - Math.min(...nums);
-  const scale = PROBABILITY_MARKETS.has(market) ? 0.22 : 2.4;
+  const scale = FRAMEWORK_PROBABILITY_MARKETS.has(market) ? 0.22 : 2.4;
   return clamp(1 - spread / scale, 0, 1);
+}
+
+function expectedCountRange(lambda, floorMult, ceilingMult, line) {
+  const expectedCount = Math.max(0, lambda);
+  const floorCount = expectedCount * floorMult;
+  const ceilingCount = expectedCount * ceilingMult;
+  return {
+    expectedCount,
+    floorCount,
+    ceilingCount,
+    floorProb: poissonAtLeast(floorCount, line),
+    ceilingProb: poissonAtLeast(ceilingCount, line),
+  };
 }
 
 function frameworkBlend({
@@ -181,6 +195,13 @@ function expectedPAForBattingOrder(order) {
   return 3.6;
 }
 
+// Practical MLB projection pipeline:
+// 1) weight recent performance into skill components,
+// 2) regress volatile samples toward league baselines,
+// 3) apply matchup/park context multipliers when inputs exist,
+// 4) convert the final rate projection into benchmark probabilities.
+// When optional context inputs are missing, the model gracefully falls back
+// to the regressed season + recent baseline instead of dropping the market.
 export function scoreHitter(name, ctx) {
   const out = [];
   const dqBase = !ctx.season && !ctx.recent
@@ -362,30 +383,35 @@ export function scoreHitter(name, ctx) {
 
   {
     const lambda = tbPerPAAdj * expectedPA;
+    const { expectedCount, floorCount, ceilingCount, floorProb, ceilingProb } = expectedCountRange(lambda, 0.72, 1.28, 2);
     const leagueBaseline = LEAGUE.tbPerPA * expectedPA;
     const seasonProjection = tbPerPASeason * expectedPA;
     const recentProjection = tbPerPARecent != null ? tbPerPARecent * expectedPA : seasonProjection;
     const contextProjection = clamp(tbPerPA * contactMult * clamp(1 + (parkFactor - 100) / 100 * 0.25, 0.88, 1.15), 0.12, 1.1) * expectedPA;
     const ensemble = frameworkBlend({
       market: "total_bases",
-      confidence: toConfidence(pOver, 0.35, 150),
-      projection: lambda,
-      floor: lambda * 0.72,
-      ceiling: lambda * 1.28,
+      baseProjection: expectedCount,
+      leagueBaseline,
+      skillProjection: seasonProjection,
+      recentProjection,
+      contextProjection,
+      floor: floorCount,
+      ceiling: ceilingCount,
     });
     const lambdaFinal = ensemble.projection;
     const pOver15 = poissonAtLeast(lambdaFinal, 2);
     out.push({
       market: "total_bases",
       confidence: toConfidence(pOver15, 0.5, 140),
-      projection: lambdaFinal,
-      floor: lambdaFinal * 0.72,
-      ceiling: lambdaFinal * 1.28,
+      projection: pOver15,
+      floor: floorProb,
+      ceiling: ceilingProb,
       trigger,
       triggerStrength,
       features: baseFeatures(ctx, {
         tbPerPA,
         tbPerPAAdj,
+        expectedCount: lambdaFinal,
         pOverLine: pOver15,
         tbOver1_5Prob: pOver15,
         modelAgreement: ensemble.agreement,
@@ -399,41 +425,62 @@ export function scoreHitter(name, ctx) {
 
   {
     const lambda = hrrPerPAAdj * expectedPA;
-    const pOver2 = poissonAtLeast(lambda, 3);
-    out.push({
+    const { expectedCount, floorCount, ceilingCount } = expectedCountRange(lambda, 0.7, 1.3, 2);
+    const leagueBaseline = LEAGUE.hrrPerPA * expectedPA;
+    const seasonProjection = hrrPerPASeason * expectedPA;
+    const recentProjection = hrrPerPARecent != null ? hrrPerPARecent * expectedPA : seasonProjection;
+    const contextProjection = hrrPerPAAdj * expectedPA;
+    const ensemble = frameworkBlend({
       market: "hrr_2",
-      confidence: toConfidence(pOver2, 0.35, 150),
-      projection: lambda,
-      floor: lambda * 0.7,
-      ceiling: lambda * 1.3,
+      baseProjection: expectedCount,
+      leagueBaseline,
+      skillProjection: seasonProjection,
+      recentProjection,
+      contextProjection,
+      floor: floorCount,
+      ceiling: ceilingCount,
     });
     const lambdaFinal = ensemble.projection;
     const pOver15 = poissonAtLeast(lambdaFinal, 2);
     const pOver25 = poissonAtLeast(lambdaFinal, 3);
-    const blendedHrrOver = pOver15 * 0.72 + pOver25 * 0.28;
     out.push({
-      market: "hrr",
-      confidence: toConfidence(blendedHrrOver, 0.5, 140),
-      projection: lambdaFinal,
-      floor: lambdaFinal * 0.7,
-      ceiling: lambdaFinal * 1.3,
+      market: "hrr_2",
+      confidence: toConfidence(pOver15, 0.5, 145),
+      projection: pOver15,
+      floor: poissonAtLeast(floorCount, 2),
+      ceiling: poissonAtLeast(ceilingCount, 2),
       trigger,
       triggerStrength,
-      features: baseFeatures(ctx, { hrrPerPA, hrrPerPAAdj, pOverLine: pOver2 }),
+      features: baseFeatures(ctx, {
+        hrrPerPA,
+        hrrPerPAAdj,
+        expectedCount: lambdaFinal,
+        pOverLine: pOver15,
+        hrrOver1_5Prob: pOver15,
+        modelAgreement: ensemble.agreement,
+        framework: ensemble.components,
+      }),
       dataQuality: dqBase,
       recommended: false,
       recScore: 0,
     });
-    const pOver3 = poissonAtLeast(lambda, 4);
     out.push({
       market: "hrr_3",
-      confidence: toConfidence(pOver3, 0.12, 200),
-      projection: lambda,
-      floor: lambda * 0.7,
-      ceiling: lambda * 1.3,
+      confidence: toConfidence(pOver25, 0.32, 165),
+      projection: pOver25,
+      floor: poissonAtLeast(floorCount, 3),
+      ceiling: poissonAtLeast(ceilingCount, 3),
       trigger,
       triggerStrength,
-      features: baseFeatures(ctx, { hrrPerPA, hrrPerPAAdj, pOverLine: pOver3 }),
+      features: baseFeatures(ctx, {
+        hrrPerPA,
+        hrrPerPAAdj,
+        expectedCount: lambdaFinal,
+        pOverLine: pOver25,
+        hrrOver2_5Prob: pOver25,
+        modelAgreement: ensemble.agreement,
+        framework: ensemble.components,
+      }),
       dataQuality: dqBase,
       recommended: false,
       recScore: 0,
@@ -442,6 +489,7 @@ export function scoreHitter(name, ctx) {
 
   for (const s of out) {
     const pOver = s.features?.pOverLine ?? (s.market === "hit_2" || s.market === "home_run" ? s.projection : 0.5);
+    const agreement = Number(s.features?.modelAgreement ?? 0.5);
     if (s.market === "home_run") {
       const liftVsPark = s.features?.liftVsPark ?? 0;
       const certainty = Math.max(0, 1 - (s.ceiling - s.floor) * 3.5);
@@ -486,7 +534,20 @@ export function scorePitcher(name, ctx) {
   const expectedIP = ctx.expectedIP ?? clamp((st.gs ?? 0) > 0 ? (st.ip ?? 0) / (st.gs ?? 1) : 5.5, 4.5, 7.0);
   const expectedBF = expectedIP * 4.2;
   const lambdaK = expectedBF * kRateAdj;
-  const pOver = poissonAtLeast(lambdaK, 7);
+  const floorCount = lambdaK * 0.72;
+  const ceilingCount = lambdaK * 1.28;
+  const ensemble = frameworkBlend({
+    market: "strikeouts",
+    baseProjection: lambdaK,
+    leagueBaseline: expectedBF * leagueK,
+    skillProjection: expectedBF * kRateSeason,
+    recentProjection: expectedBF * kRateSeason,
+    contextProjection: lambdaK,
+    floor: floorCount,
+    ceiling: ceilingCount,
+  });
+  const lambdaFinal = ensemble.projection;
+  const pOver = poissonAtLeast(lambdaFinal, 7);
 
   const trigger =
     oppK > leagueK + 0.02
@@ -499,9 +560,9 @@ export function scorePitcher(name, ctx) {
   const pick = {
     market: "strikeouts",
     confidence: toConfidence(pOver, 0.35, 170),
-    projection: lambdaK,
-    floor: lambdaK * 0.72,
-    ceiling: lambdaK * 1.28,
+    projection: lambdaFinal,
+    floor: floorCount,
+    ceiling: ceilingCount,
     trigger,
     triggerStrength,
     features: {
