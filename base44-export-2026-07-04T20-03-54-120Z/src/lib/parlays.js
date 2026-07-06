@@ -365,26 +365,6 @@ export function buildParlays(predictions, selectedGamePks) {
     );
     if (par5) parlays.push(par5);
 
-    // 6-Leg
-    const cands6 = ranked.filter((p) => p._legProb >= 0.5);
-    let legs6 = pickTierMix(
-      cands6, 6,
-      [{ tier: "s", count: 1 }, { tier: "a", count: 2 }, { tier: "b", count: 2 }, { tier: "c", count: 1 }],
-      { maxPerGame: 2, maxPerPlayer: 1, bannedPlayerIds: usedPlayers }
-    );
-    if (legs6.length < 6) {
-      legs6 = pickTierMix(
-        cands6, 6,
-        [{ tier: "s", count: 1 }, { tier: "a", count: 2 }, { tier: "b", count: 2 }, { tier: "c", count: 1 }],
-        { maxPerGame: 2, maxPerPlayer: 1 }
-      );
-    }
-    const par6 = assembleParlay(
-      "6-Leg", "6-leg leverage parlay.",
-      legs6.map((p) => toLeg(p, `leverage leg (tier ${String(p._tier).toUpperCase()})`)), 6
-    );
-    if (par6) parlays.push(par6);
-
     return parlays;
   }
 
