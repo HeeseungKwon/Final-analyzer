@@ -11,7 +11,6 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/components/ui/use-toast";
 import { gradeAllUngraded } from "@/lib/grading";
-import { buildParlays, buildHRParlays } from "@/lib/parlays";
 import { runOneTimeABComparison } from "@/lib/ab-comparison";
 import { getMarketLabel, isProbabilityMarket } from "@/lib/constants/markets";
 import BucketBar from "@/components/mlb/BucketBar";
@@ -156,66 +155,6 @@ function buildAccuracyFromPicks(gradedPicks) {
   return { marketSummary, buckets };
 }
 
-function evaluateParlayResults(parlays, predictionById) {
-  const rows = parlays.map((parlay) => {
-    let gradedLegs = 0;
-    let hitLegs = 0;
-    let missLegs = 0;
-
-    const legs = parlay.legs.map((leg) => {
-      const pred = predictionById.get(leg.predictionId);
-      const hit = pred?.graded ? pred.hit : null;
-      if (hit === true) {
-        gradedLegs += 1;
-        hitLegs += 1;
-      } else if (hit === false) {
-        gradedLegs += 1;
-        missLegs += 1;
-      }
-      return {
-        ...leg,
-        hit,
-        marketLabel: getMarketLabel(leg.market, "short"),
-      };
-    });
-
-    const settled = gradedLegs === parlay.legs.length;
-    const won = settled ? missLegs === 0 : null;
-
-    return {
-      ...parlay,
-      legs,
-      gradedLegs,
-      hitLegs,
-      missLegs,
-      pendingLegs: parlay.legs.length - gradedLegs,
-      settled,
-      won,
-      hitRate: gradedLegs > 0 ? hitLegs / gradedLegs : null,
-    };
-  });
-
-  const settledParlays = rows.filter((r) => r.settled);
-  const wonParlays = settledParlays.filter((r) => r.won).length;
-
-  return {
-    rows,
-    settled: settledParlays.length,
-    won: wonParlays,
-    winRate: settledParlays.length > 0 ? wonParlays / settledParlays.length : null,
-  };
-}
-
-function LegStatusBadge({ hit }) {
-  if (hit === true) {
-    return <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100">Hit</Badge>;
-  }
-  if (hit === false) {
-    return <Badge className="bg-rose-100 text-rose-800 hover:bg-rose-100">Miss</Badge>;
-  }
-  return <Badge variant="outline">Pending</Badge>;
-}
-
 export default function Review() {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -332,11 +271,7 @@ export default function Review() {
       const gradedPicks = predictionsWithGameTime.filter((p) => p.graded === true);
       const { marketSummary, buckets } = buildAccuracyFromPicks(gradedPicks);
 
-      const predictionById = new Map(predictionsWithGameTime.map((p) => [p.id, p]));
-      const parlaySummary = evaluateParlayResults(buildParlays(predictionsWithGameTime), predictionById);
-      const hrParlaySummary = evaluateParlayResults(buildHRParlays(predictionsWithGameTime), predictionById);
-
-      return { marketSummary, buckets, gradedPicks, parlaySummary, hrParlaySummary };
+      return { marketSummary, buckets, gradedPicks };
     },
   });
 
@@ -669,136 +604,6 @@ export default function Review() {
             )}
           </CardContent>
         </Card>
-      )}
-
-      {!isLoading && (
-        <div className="mt-6 grid gap-6 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Daily parlays results</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {(data?.parlaySummary?.rows ?? []).length === 0 ? (
-                <div className="py-8 text-center text-sm text-muted-foreground">No parlays generated for this date.</div>
-              ) : (
-                <>
-                  <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-                    <Badge variant="outline">Settled: {data.parlaySummary.settled}</Badge>
-                    <Badge variant="outline">Won: {data.parlaySummary.won}</Badge>
-                    <Badge variant="outline">
-                      Win rate: {data.parlaySummary.winRate != null ? `${(data.parlaySummary.winRate * 100).toFixed(1)}%` : "—"}
-                    </Badge>
-                  </div>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Parlay</TableHead>
-                        <TableHead>Picks</TableHead>
-                        <TableHead className="text-right">Hit</TableHead>
-                        <TableHead className="text-right">Miss</TableHead>
-                        <TableHead className="text-right">Pending</TableHead>
-                        <TableHead className="text-right">Leg hit rate</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {data.parlaySummary.rows.map((r) => (
-                        <TableRow key={r.name}>
-                          <TableCell className="font-medium">
-                            {r.name}
-                            <div className="text-xs text-muted-foreground">
-                              {r.settled ? (r.won ? "Won" : "Lost") : "Pending"}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="space-y-1">
-                              {r.legs.map((l) => (
-                                <div key={l.predictionId} className="flex items-center justify-between gap-2 text-xs">
-                                  <span className="truncate text-muted-foreground">
-                                    {l.player} · {l.marketLabel}
-                                  </span>
-                                  <LegStatusBadge hit={l.hit} />
-                                </div>
-                              ))}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">{r.hitLegs}</TableCell>
-                          <TableCell className="text-right tabular-nums">{r.missLegs}</TableCell>
-                          <TableCell className="text-right tabular-nums">{r.pendingLegs}</TableCell>
-                          <TableCell className="text-right tabular-nums font-semibold">
-                            {r.hitRate != null ? `${(r.hitRate * 100).toFixed(1)}%` : "—"}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Daily HR parlays results</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {(data?.hrParlaySummary?.rows ?? []).length === 0 ? (
-                <div className="py-8 text-center text-sm text-muted-foreground">No HR parlays generated for this date.</div>
-              ) : (
-                <>
-                  <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-                    <Badge variant="outline">Settled: {data.hrParlaySummary.settled}</Badge>
-                    <Badge variant="outline">Won: {data.hrParlaySummary.won}</Badge>
-                    <Badge variant="outline">
-                      Win rate: {data.hrParlaySummary.winRate != null ? `${(data.hrParlaySummary.winRate * 100).toFixed(1)}%` : "—"}
-                    </Badge>
-                  </div>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Parlay</TableHead>
-                        <TableHead>Picks</TableHead>
-                        <TableHead className="text-right">Hit</TableHead>
-                        <TableHead className="text-right">Miss</TableHead>
-                        <TableHead className="text-right">Pending</TableHead>
-                        <TableHead className="text-right">Leg hit rate</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {data.hrParlaySummary.rows.map((r) => (
-                        <TableRow key={r.name}>
-                          <TableCell className="font-medium">
-                            {r.name}
-                            <div className="text-xs text-muted-foreground">
-                              {r.settled ? (r.won ? "Won" : "Lost") : "Pending"}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="space-y-1">
-                              {r.legs.map((l) => (
-                                <div key={l.predictionId} className="flex items-center justify-between gap-2 text-xs">
-                                  <span className="truncate text-muted-foreground">
-                                    {l.player} · {l.marketLabel}
-                                  </span>
-                                  <LegStatusBadge hit={l.hit} />
-                                </div>
-                              ))}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">{r.hitLegs}</TableCell>
-                          <TableCell className="text-right tabular-nums">{r.missLegs}</TableCell>
-                          <TableCell className="text-right tabular-nums">{r.pendingLegs}</TableCell>
-                          <TableCell className="text-right tabular-nums font-semibold">
-                            {r.hitRate != null ? `${(r.hitRate * 100).toFixed(1)}%` : "—"}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        </div>
       )}
 
       {!isLoading && (

@@ -124,9 +124,12 @@ function styleForPortfolio(row) {
 }
 
 function rebalanceRecommendations(rows) {
-  const MIN_RECOMMEND_RATIO = 0.3;
+  // Target up to 50 unique players per day. A player with multiple market
+  // types (HR, HRR, TB, Hits) counts as ONE unique player toward this target.
+  // When fewer than 50 valid candidates exist all available players are returned.
   const TARGET_UNIQUE_PLAYERS = 50;
-  const MAX_PER_PLAYER = 1;
+  // Allow up to 4 market-type picks per player so all applicable markets appear.
+  const MAX_PICKS_PER_PLAYER = 4;
   const MAX_PER_GAME = 6;
   const POWER_MARKETS = new Set(["home_run", "hrr_2", "hrr_3", "total_bases"]);
 
@@ -146,22 +149,24 @@ function rebalanceRecommendations(rows) {
   const byGame = new Map();
   const playerPowerTaken = new Set();
   const selected = new Set();
+  // Dedupe key: unique player identities selected (counts toward the 50-player target)
+  const uniqueSelectedPlayers = new Set();
 
   const eligiblePlayers = new Set(candidates.map((c) => c.row.player_id));
-  const targetCount = Math.min(
-    candidates.length,
-    Math.max(Math.ceil(candidates.length * MIN_RECOMMEND_RATIO), Math.min(TARGET_UNIQUE_PLAYERS, eligiblePlayers.size))
-  );
+  // Cap target at the number of actually available players to avoid crashing
+  const targetUniquePlayers = Math.min(TARGET_UNIQUE_PLAYERS, eligiblePlayers.size);
 
   const canTake = (c) => {
     if (selected.has(c.idx)) return false;
-    if (selected.size >= targetCount) return false;
+    // Do not admit new players once the unique-player target is reached;
+    // additional market picks for already-selected players are still allowed.
+    if (!uniqueSelectedPlayers.has(c.row.player_id) && uniqueSelectedPlayers.size >= targetUniquePlayers) return false;
 
     const marketCount = byMarket.get(c.row.market) ?? 0;
     if (marketCount >= (MARKET_LIMITS[c.row.market] ?? 10)) return false;
 
     const playerCount = byPlayer.get(c.row.player_id) ?? 0;
-    if (playerCount >= MAX_PER_PLAYER) return false;
+    if (playerCount >= MAX_PICKS_PER_PLAYER) return false;
 
     if (POWER_MARKETS.has(c.row.market) && playerPowerTaken.has(c.row.player_id)) return false;
 
@@ -176,16 +181,18 @@ function rebalanceRecommendations(rows) {
     byMarket.set(c.row.market, (byMarket.get(c.row.market) ?? 0) + 1);
     byPlayer.set(c.row.player_id, (byPlayer.get(c.row.player_id) ?? 0) + 1);
     byGame.set(c.row.game_pk, (byGame.get(c.row.game_pk) ?? 0) + 1);
+    uniqueSelectedPlayers.add(c.row.player_id);
     if (POWER_MARKETS.has(c.row.market)) {
       playerPowerTaken.add(c.row.player_id);
     }
   };
 
-  const targets = {
-    aggressive: Math.round(targetCount * PORTFOLIO_STYLE_WEIGHTS.aggressive),
-    neutral: Math.round(targetCount * PORTFOLIO_STYLE_WEIGHTS.neutral),
+  // Phase 1: Fill style buckets targeting unique players per style
+  const styleTargets = {
+    aggressive: Math.round(targetUniquePlayers * PORTFOLIO_STYLE_WEIGHTS.aggressive),
+    neutral: Math.round(targetUniquePlayers * PORTFOLIO_STYLE_WEIGHTS.neutral),
   };
-  targets.conservative = Math.max(0, targetCount - targets.aggressive - targets.neutral);
+  styleTargets.conservative = Math.max(0, targetUniquePlayers - styleTargets.aggressive - styleTargets.neutral);
 
   const styleBuckets = {
     aggressive: candidates.filter((c) => c.style === "aggressive"),
@@ -194,17 +201,22 @@ function rebalanceRecommendations(rows) {
   };
 
   for (const style of ["aggressive", "neutral", "conservative"]) {
-    let count = 0;
+    let uniqueInStyle = 0;
     for (const c of styleBuckets[style]) {
-      if (count >= targets[style]) break;
+      if (uniqueInStyle >= styleTargets[style]) break;
+      // Skip players already admitted via another style
+      if (uniqueSelectedPlayers.has(c.row.player_id)) continue;
       if (!canTake(c)) continue;
       take(c);
-      count += 1;
+      uniqueInStyle += 1;
     }
   }
 
+  // Phase 2: Single pass over all candidates — fills remaining unique-player slots
+  // AND adds additional market-type picks for already-selected players.
+  // canTake() blocks new players once targetUniquePlayers is reached while still
+  // allowing extra market picks for players already in the selection.
   for (const c of candidates) {
-    if (selected.size >= targetCount) break;
     if (!canTake(c)) continue;
     take(c);
   }
