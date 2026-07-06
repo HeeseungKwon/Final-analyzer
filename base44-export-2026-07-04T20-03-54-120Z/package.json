@@ -10,6 +10,7 @@
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p ./jsconfig.json",
+    "validate:benchmarks": "node ./scripts/validate-benchmarks.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

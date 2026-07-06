@@ -7,6 +7,7 @@
     "build": "npm --prefix base44-export-2026-07-04T20-03-54-120Z run build",
     "lint": "npm --prefix base44-export-2026-07-04T20-03-54-120Z run lint",
     "typecheck": "npm --prefix base44-export-2026-07-04T20-03-54-120Z run typecheck",
+    "validate:benchmarks": "npm --prefix base44-export-2026-07-04T20-03-54-120Z run validate:benchmarks",
     "preview": "npm --prefix base44-export-2026-07-04T20-03-54-120Z run preview"
   }
 }

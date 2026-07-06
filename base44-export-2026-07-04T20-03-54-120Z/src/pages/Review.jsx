@@ -13,19 +13,10 @@ import { useToast } from "@/components/ui/use-toast";
 import { gradeAllUngraded } from "@/lib/grading";
 import { buildParlays, buildHRParlays } from "@/lib/parlays";
 import { runOneTimeABComparison } from "@/lib/ab-comparison";
-import { getMarketLabel } from "@/lib/constants/markets";
+import { getMarketLabel, isProbabilityMarket } from "@/lib/constants/markets";
 import BucketBar from "@/components/mlb/BucketBar";
 import PicksReviewTable from "@/components/mlb/PicksReviewTable";
 import { recalculateParlayStatus, syncAllParlays } from "@/lib/utils/parlaySync";
-
-const MARKET_LABEL = {
-  hit_2: "2+ Hits",
-  hrr_2: "HRR 2.5",
-  hrr_3: "HRR 3.5",
-  total_bases: "Total Bases",
-  home_run: "Home Run",
-  strikeouts: "Strikeouts",
-};
 
 const DAILY_PARLAYS_KEY = "dailyParlays_v1";
 
@@ -51,7 +42,7 @@ function formatSavedAt(isoStr) {
 
 function formatLegProjection(leg) {
   if (leg?.projection == null) return "—";
-  if (leg.market === "home_run" || leg.market === "hit_2") {
+  if (isProbabilityMarket(leg.market)) {
     return `${(Number(leg.projection) * 100).toFixed(1)}%`;
   }
   return Number(leg.projection).toFixed(2);
@@ -511,7 +502,7 @@ export default function Review() {
                   <TableBody>
                     {data.marketSummary.map((m) => (
                       <TableRow key={m.market}>
-                        <TableCell>{MARKET_LABEL[m.market] ?? m.market}</TableCell>
+                        <TableCell>{getMarketLabel(m.market, "full")}</TableCell>
                         <TableCell className="text-right tabular-nums">{m.n}</TableCell>
                         <TableCell className="text-right tabular-nums">{m.hits}</TableCell>
                         <TableCell className="text-right tabular-nums font-bold">
@@ -540,7 +531,7 @@ export default function Review() {
                   ).map(([market, rows]) => (
                     <div key={market}>
                       <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                        {MARKET_LABEL[market] ?? market}
+                        {getMarketLabel(market, "full")}
                       </div>
                       <div className="space-y-2">
                         {rows.map((b) => (

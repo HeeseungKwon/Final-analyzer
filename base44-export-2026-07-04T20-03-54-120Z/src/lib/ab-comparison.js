@@ -55,8 +55,8 @@ function evaluateHitterMarket(market, batting) {
   const tb = singles + doubles * 2 + triples * 3 + hr * 4;
   switch (market) {
     case "hit_2": return hits >= 2;
-    case "hrr_2": return hits + runs + rbi >= 3;
-    case "hrr_3": return hits + runs + rbi >= 4;
+    case "hrr_2": return hits + runs + rbi >= 2;
+    case "hrr_3": return hits + runs + rbi >= 3;
     case "total_bases": return tb >= 2;
     case "home_run": return hr >= 1;
     default: return null;

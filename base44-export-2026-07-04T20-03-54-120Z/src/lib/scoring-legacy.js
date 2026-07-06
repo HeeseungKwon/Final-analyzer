@@ -20,6 +20,19 @@ function binomAtLeast(n, p, k) {
   return 0;
 }
 
+function poissonAtLeast(lambda, k) {
+  const l = Math.max(0, lambda);
+  if (k <= 0) return 1;
+  if (l === 0) return 0;
+  let term = Math.exp(-l);
+  let cum = term;
+  for (let i = 1; i < k; i++) {
+    term = (term * l) / i;
+    cum += term;
+  }
+  return Math.max(0, Math.min(1, 1 - cum));
+}
+
 function blend(season, recent, wRecent = 0.35) {
   if (season == null && recent == null) return null;
   if (season == null) return recent;
@@ -131,28 +144,31 @@ export function scoreHitterLegacy(name, ctx) {
       ? (ctx.season.hits + ctx.season.doubles + ctx.season.triples * 2 + ctx.season.home_runs * 3) / ctx.season.pa : slg;
     const adjTB = tbPerPA * matchupMult;
     const proj = adjTB * ctx.expectedPA;
+    const pOver15 = poissonAtLeast(proj, 2);
     out.push({
-      market: "total_bases", confidence: toConfidence(proj / 2.5, 0.6, 100), projection: proj,
-      floor: proj * 0.7, ceiling: proj * 1.4,
+      market: "total_bases", confidence: toConfidence(pOver15, 0.5, 130), projection: pOver15,
+      floor: poissonAtLeast(proj * 0.7, 2), ceiling: poissonAtLeast(proj * 1.4, 2),
       trigger, triggerStrength,
-      features: baseFeatures(ctx, { slg, adjSlg, tbPerPA }),
+      features: baseFeatures(ctx, { slg, adjSlg, tbPerPA, expectedCount: proj, pOverLine: pOver15, tbOver1_5Prob: pOver15 }),
       dataQuality: dqBase, recommended: false, recScore: 0,
     });
   }
   {
     const proj = adjHrr * ctx.expectedPA;
+    const pOver15 = poissonAtLeast(proj, 2);
+    const pOver25 = poissonAtLeast(proj, 3);
     out.push({
-      market: "hrr_2", confidence: toConfidence(proj / 3.5, 0.6, 100), projection: proj,
-      floor: proj * 0.65, ceiling: proj * 1.45,
+      market: "hrr_2", confidence: toConfidence(pOver15, 0.5, 130), projection: pOver15,
+      floor: poissonAtLeast(proj * 0.65, 2), ceiling: poissonAtLeast(proj * 1.45, 2),
       trigger, triggerStrength,
-      features: baseFeatures(ctx, { hrrRate, adjHrr }),
+      features: baseFeatures(ctx, { hrrRate, adjHrr, expectedCount: proj, pOverLine: pOver15, hrrOver1_5Prob: pOver15 }),
       dataQuality: dqBase, recommended: false, recScore: 0,
     });
     out.push({
-      market: "hrr_3", confidence: toConfidence(proj / 4.5, 0.5, 100), projection: proj,
-      floor: proj * 0.65, ceiling: proj * 1.45,
+      market: "hrr_3", confidence: toConfidence(pOver25, 0.32, 150), projection: pOver25,
+      floor: poissonAtLeast(proj * 0.65, 3), ceiling: poissonAtLeast(proj * 1.45, 3),
       trigger, triggerStrength,
-      features: baseFeatures(ctx, { hrrRate, adjHrr }),
+      features: baseFeatures(ctx, { hrrRate, adjHrr, expectedCount: proj, pOverLine: pOver25, hrrOver2_5Prob: pOver25 }),
       dataQuality: dqBase, recommended: false, recScore: 0,
     });
   }
