@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { buildParlays, buildHRParlays, buildCustomParlay as buildCustomParlayFn } from "@/lib/parlays";
+import { recalculateParlayStatus } from "@/lib/utils/parlaySync";
 
 const MARKET_SHORT = {
   hit_2: "2+ Hits",
@@ -31,15 +32,6 @@ function genId(prefix) {
 function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function formatSavedAt(isoStr) {
-  if (!isoStr) return "";
-  try {
-    return new Date(isoStr).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return isoStr;
-  }
 }
 
 function ParlayCard({ parlay, selectable, selected, onToggle, onDelete }) {
@@ -108,85 +100,6 @@ function ParlayCard({ parlay, selectable, selected, onToggle, onDelete }) {
                   <TableCell className="text-right tabular-nums">{(l.legProb * 100).toFixed(1)}%</TableCell>
                   <TableCell className="text-right tabular-nums">{Number(l.confidence).toFixed(0)}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{l.reason}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function DailyParlayCard({ parlay, onDelete, onStatusChange }) {
-  const statusColors = {
-    pending: "bg-yellow-100 text-yellow-800",
-    won: "bg-emerald-100 text-emerald-800",
-    lost: "bg-rose-100 text-rose-800",
-  };
-  return (
-    <Card>
-      <CardHeader className="flex-row items-start justify-between space-y-0 pb-2">
-        <div>
-          <div className="flex items-center gap-2">
-            <CardTitle className="text-base font-bold">{parlay.name}</CardTitle>
-            <Badge className={`text-xs ${statusColors[parlay.status] ?? statusColors.pending}`}>
-              {parlay.status ?? "pending"}
-            </Badge>
-            {parlay.source === "custom" && (
-              <Badge variant="outline" className="text-xs">Custom</Badge>
-            )}
-          </div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            Saved {formatSavedAt(parlay.savedAt)} · {parlay.legs.length} legs · {parlay.fairAmericanOdds}
-          </div>
-        </div>
-        <div className="flex items-center gap-1">
-          <Button
-            variant={parlay.status === "won" ? "default" : "outline"}
-            size="sm"
-            className="h-7 px-2 text-xs"
-            onClick={() => onStatusChange(parlay.id, parlay.status === "won" ? "pending" : "won")}
-          >
-            Won
-          </Button>
-          <Button
-            variant={parlay.status === "lost" ? "destructive" : "outline"}
-            size="sm"
-            className="h-7 px-2 text-xs"
-            onClick={() => onStatusChange(parlay.id, parlay.status === "lost" ? "pending" : "lost")}
-          >
-            Lost
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-            onClick={() => onDelete(parlay.id)}
-          >
-            Delete
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="pt-0">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Player</TableHead>
-                <TableHead>Market</TableHead>
-                <TableHead className="text-right">Leg %</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {parlay.legs.map((l) => (
-                <TableRow key={l.predictionId}>
-                  <TableCell className="font-medium text-sm">
-                    {l.player}
-                    {l.teamName && <span className="ml-1 text-xs font-normal text-muted-foreground">({l.teamName})</span>}
-                  </TableCell>
-                  <TableCell className="text-sm">{MARKET_SHORT[l.market] ?? l.market}</TableCell>
-                  <TableCell className="text-right tabular-nums text-sm">{(l.legProb * 100).toFixed(1)}%</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -328,28 +241,37 @@ export default function Parlays() {
   function handleSaveDailyParlays() {
     const now = new Date().toISOString();
     const toSave = [];
+    const buildSavedParlay = (parlay, source) => {
+      const {
+        gameDate: _gameDate,
+        savedAt: _savedAt,
+        status: _status,
+        completedLegs: _completedLegs,
+        hitLegs: _hitLegs,
+        missLegs: _missLegs,
+        pendingLegs: _pendingLegs,
+        totalLegs: _totalLegs,
+        ...rest
+      } = parlay;
+
+      return recalculateParlayStatus({
+        ...rest,
+        id: genId("daily"),
+        gameDate: date,
+        savedAt: now,
+        source,
+      });
+    };
 
     for (const p of analyzerParlays) {
       if (selectedAnalyzerParlayNames.has(p.name)) {
-        toSave.push({
-          ...p,
-          id: genId("daily"),
-          savedAt: now,
-          status: "pending",
-          source: "analyzer",
-        });
+        toSave.push(buildSavedParlay(p, "analyzer"));
       }
     }
 
     for (const p of userCustomParlays) {
       if (selectedCustomParlayIds.has(p.id)) {
-        toSave.push({
-          ...p,
-          id: genId("daily"),
-          savedAt: now,
-          status: "pending",
-          source: "custom",
-        });
+        toSave.push(buildSavedParlay(p, "custom"));
       }
     }
 
@@ -360,20 +282,8 @@ export default function Parlays() {
     try { localStorage.setItem(DAILY_PARLAYS_KEY, JSON.stringify(updated)); } catch {}
     setSelectedAnalyzerParlayNames(new Set());
     setSelectedCustomParlayIds(new Set());
-    setSaveMessage(`✅ Saved ${toSave.length} parlay${toSave.length > 1 ? "s" : ""} for daily review!`);
+    setSaveMessage(`✅ Saved ${toSave.length} parlay${toSave.length > 1 ? "s" : ""} to Accuracy Review!`);
     setTimeout(() => setSaveMessage(""), 4000);
-  }
-
-  function handleDeleteDailyParlay(parlayId) {
-    const updated = dailyParlays.filter((p) => p.id !== parlayId);
-    setDailyParlays(updated);
-    try { localStorage.setItem(DAILY_PARLAYS_KEY, JSON.stringify(updated)); } catch {}
-  }
-
-  function handleDailyParlayStatus(parlayId, status) {
-    const updated = dailyParlays.map((p) => p.id === parlayId ? { ...p, status } : p);
-    setDailyParlays(updated);
-    try { localStorage.setItem(DAILY_PARLAYS_KEY, JSON.stringify(updated)); } catch {}
   }
 
   const totalSelected = selectedAnalyzerParlayNames.size + selectedCustomParlayIds.size;
@@ -386,7 +296,7 @@ export default function Parlays() {
           <div className="text-xs uppercase tracking-widest text-muted-foreground">Portfolio</div>
           <h1 className="text-3xl font-black tracking-tight">Daily Parlays</h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Select games to generate parlays, build your own custom parlays, then save them for daily review.
+            Select games to generate parlays, build your own custom parlays, then save them to Accuracy Review.
           </p>
         </div>
         <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-40" />
@@ -570,7 +480,7 @@ export default function Parlays() {
               <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">{saveMessage}</p>
             )}
             {totalSelected === 0 && (
-              <p className="text-xs text-muted-foreground">Select parlays above or below to save them for daily review</p>
+              <p className="text-xs text-muted-foreground">Select parlays above or below to save them to Accuracy Review</p>
             )}
           </div>
 
@@ -622,44 +532,6 @@ export default function Parlays() {
         </>
       )}
 
-      {/* ── Section 3: Daily Parlays Review ────────────────────────────── */}
-      <div className="mt-6">
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <div className="text-xs uppercase tracking-widest text-muted-foreground">Step 3</div>
-            <h2 className="text-2xl font-black tracking-tight">Daily Parlays Review</h2>
-            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-              Track the parlays you saved. Mark each as Won or Lost once results are in.
-            </p>
-          </div>
-          {dailyParlays.length > 0 && (
-            <div className="text-sm text-muted-foreground">
-              {dailyParlays.filter((p) => p.status === "won").length}W /&nbsp;
-              {dailyParlays.filter((p) => p.status === "lost").length}L /&nbsp;
-              {dailyParlays.filter((p) => p.status === "pending").length} pending
-            </div>
-          )}
-        </div>
-
-        {dailyParlays.length === 0 ? (
-          <Card>
-            <CardContent className="py-10 text-center text-sm text-muted-foreground">
-              No saved parlays yet. Select games, pick parlays above, and click "Save Parlays for the Day".
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid gap-4">
-            {[...dailyParlays].reverse().map((p) => (
-              <DailyParlayCard
-                key={p.id}
-                parlay={p}
-                onDelete={handleDeleteDailyParlay}
-                onStatusChange={handleDailyParlayStatus}
-              />
-            ))}
-          </div>
-        )}
-      </div>
     </AppShell>
   );
 }
