@@ -15,9 +15,23 @@ function normalizeLeg(leg = {}) {
   };
 }
 
+function normalizeDate(value) {
+  if (!value) return null;
+  if (typeof value === "string") {
+    return value.slice(0, 10);
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toISOString().slice(0, 10);
+}
+
 function datesMatch(parlay, pick) {
-  const parlayDate = parlay?.gameDate ?? null;
-  const pickDate = pick?.game_date ?? pick?.gameDate ?? null;
+  const parlayDate = normalizeDate(parlay?.gameDate);
+  const pickDate = normalizeDate(pick?.game_date ?? pick?.gameDate);
   if (!parlayDate || !pickDate) return false;
   return parlayDate === pickDate;
 }

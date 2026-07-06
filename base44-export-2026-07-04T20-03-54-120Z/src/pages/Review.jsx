@@ -94,6 +94,10 @@ function getSavedParlayStatusClass(status) {
   }
 }
 
+function getSavedParlayLegKey(leg, legIndex) {
+  return leg.predictionId ?? `${leg.playerId ?? leg.player_id ?? legIndex}-${leg.market}`;
+}
+
 function savedParlaysEqual(currentParlays, nextParlays) {
   if (currentParlays.length !== nextParlays.length) return false;
 
@@ -114,7 +118,8 @@ function savedParlaysEqual(currentParlays, nextParlays) {
       return false;
     }
 
-    return (parlay.legs ?? []).every((leg, legIndex) => leg.result === nextParlay.legs?.[legIndex]?.result);
+    const nextLegResults = new Map((nextParlay.legs ?? []).map((leg, legIndex) => [getSavedParlayLegKey(leg, legIndex), leg.result]));
+    return (parlay.legs ?? []).every((leg, legIndex) => nextLegResults.get(getSavedParlayLegKey(leg, legIndex)) === leg.result);
   });
 }
 
@@ -645,7 +650,7 @@ export default function Review() {
                               </TableHeader>
                               <TableBody>
                                 {parlay.legs.map((leg, legIndex) => (
-                                  <TableRow key={`${parlay.id}-${leg.predictionId ?? leg.playerId ?? leg.player_id ?? legIndex}-${leg.market}`}>
+                                  <TableRow key={`${parlay.id}-${getSavedParlayLegKey(leg, legIndex)}`}>
                                     <TableCell className="font-medium">
                                       {leg.player}
                                       {leg.teamName && (

@@ -241,28 +241,37 @@ export default function Parlays() {
   function handleSaveDailyParlays() {
     const now = new Date().toISOString();
     const toSave = [];
+    const buildSavedParlay = (parlay, source) => {
+      const {
+        gameDate: _gameDate,
+        savedAt: _savedAt,
+        status: _status,
+        completedLegs: _completedLegs,
+        hitLegs: _hitLegs,
+        missLegs: _missLegs,
+        pendingLegs: _pendingLegs,
+        totalLegs: _totalLegs,
+        ...rest
+      } = parlay;
+
+      return recalculateParlayStatus({
+        ...rest,
+        id: genId("daily"),
+        gameDate: date,
+        savedAt: now,
+        source,
+      });
+    };
 
     for (const p of analyzerParlays) {
       if (selectedAnalyzerParlayNames.has(p.name)) {
-        toSave.push(recalculateParlayStatus({
-          ...p,
-          id: genId("daily"),
-          gameDate: date,
-          savedAt: now,
-          source: "analyzer",
-        }));
+        toSave.push(buildSavedParlay(p, "analyzer"));
       }
     }
 
     for (const p of userCustomParlays) {
       if (selectedCustomParlayIds.has(p.id)) {
-        toSave.push(recalculateParlayStatus({
-          ...p,
-          id: genId("daily"),
-          gameDate: date,
-          savedAt: now,
-          source: "custom",
-        }));
+        toSave.push(buildSavedParlay(p, "custom"));
       }
     }
 
