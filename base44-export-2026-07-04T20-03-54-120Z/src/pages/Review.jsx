@@ -1,6 +1,6 @@
 const db = globalThis.__B44_DB__ || { auth:{ isAuthenticated: async()=>false, me: async()=>null }, entities:new Proxy({}, { get:()=>({ filter:async()=>[], get:async()=>null, create:async()=>({}), update:async()=>({}), delete:async()=>({}) }) }), integrations:{ Core:{ UploadFile:async()=>({ file_url:'' }) } } };
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import AppShell from "@/components/mlb/AppShell";
@@ -16,6 +16,7 @@ import { runOneTimeABComparison } from "@/lib/ab-comparison";
 import { getMarketLabel } from "@/lib/constants/markets";
 import BucketBar from "@/components/mlb/BucketBar";
 import PicksReviewTable from "@/components/mlb/PicksReviewTable";
+import { recalculateParlayStatus, syncAllParlays } from "@/lib/utils/parlaySync";
 
 const MARKET_LABEL = {
   hit_2: "2+ Hits",
@@ -26,9 +27,71 @@ const MARKET_LABEL = {
   strikeouts: "Strikeouts",
 };
 
+const DAILY_PARLAYS_KEY = "dailyParlays_v1";
+
 function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function formatSavedAt(isoStr) {
+  if (!isoStr) return "";
+  try {
+    return new Date(isoStr).toLocaleString([], {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return isoStr;
+  }
+}
+
+function formatLegProjection(leg) {
+  if (leg?.projection == null) return "—";
+  if (leg.market === "home_run" || leg.market === "hit_2") {
+    return `${(Number(leg.projection) * 100).toFixed(1)}%`;
+  }
+  return Number(leg.projection).toFixed(2);
+}
+
+function getSavedParlayStatusLabel(status) {
+  switch (status) {
+    case "won":
+      return "Won";
+    case "lost":
+      return "Lost";
+    case "inProgress":
+      return "In Progress";
+    default:
+      return "Pending";
+  }
+}
+
+function getLegResultLabel(result) {
+  switch (result) {
+    case "hit":
+      return "✓ Hit";
+    case "miss":
+      return "✗ Miss";
+    default:
+      return "⊘ Pending";
+  }
+}
+
+function getSavedParlayStatusClass(status) {
+  switch (status) {
+    case "won":
+      return "bg-emerald-100 text-emerald-800 hover:bg-emerald-100";
+    case "lost":
+      return "bg-rose-100 text-rose-800 hover:bg-rose-100";
+    case "inProgress":
+      return "bg-sky-100 text-sky-800 hover:bg-sky-100";
+    default:
+      return "bg-yellow-100 text-yellow-800 hover:bg-yellow-100";
+  }
 }
 
 function buildAccuracyFromPicks(gradedPicks) {
@@ -140,6 +203,66 @@ export default function Review() {
   const [date, setDate] = useState(todayStr());
   const [abProgress, setAbProgress] = useState("");
   const [abResult, setAbResult] = useState(null);
+  const [savedParlays, setSavedParlays] = useState([]);
+  const [parlaySyncState, setParlaySyncState] = useState({});
+  const [expandedParlayIds, setExpandedParlayIds] = useState(() => new Set());
+
+  function persistSavedParlays(nextParlays) {
+    try {
+      localStorage.setItem(DAILY_PARLAYS_KEY, JSON.stringify(nextParlays));
+    } catch {}
+  }
+
+  function loadSavedParlays() {
+    try {
+      const stored = localStorage.getItem(DAILY_PARLAYS_KEY);
+      const parsed = stored ? JSON.parse(stored) : [];
+      setSavedParlays(parsed.map((parlay) => recalculateParlayStatus(parlay)));
+    } catch {
+      setSavedParlays([]);
+    }
+  }
+
+  function deleteSavedParlay(parlayId) {
+    setSavedParlays((prev) => {
+      const next = prev.filter((parlay) => parlay.id !== parlayId);
+      persistSavedParlays(next);
+      return next;
+    });
+    setExpandedParlayIds((prev) => {
+      const next = new Set(prev);
+      next.delete(parlayId);
+      return next;
+    });
+  }
+
+  function toggleSavedParlay(parlayId) {
+    setExpandedParlayIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(parlayId)) {
+        next.delete(parlayId);
+      } else {
+        next.add(parlayId);
+      }
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    loadSavedParlays();
+  }, []);
+
+  useEffect(() => {
+    const syncState = savedParlays.reduce((acc, parlay) => {
+      acc[parlay.id] = {
+        status: parlay.status,
+        completedLegs: parlay.completedLegs ?? 0,
+        totalLegs: parlay.totalLegs ?? parlay.legs?.length ?? 0,
+      };
+      return acc;
+    }, {});
+    setParlaySyncState(syncState);
+  }, [savedParlays]);
 
   const grade = useMutation({
     mutationFn: () => gradeAllUngraded(setProgress),
@@ -191,6 +314,25 @@ export default function Review() {
       return { marketSummary, buckets, gradedPicks, parlaySummary, hrParlaySummary };
     },
   });
+
+  useEffect(() => {
+    if (isLoading) return;
+    const gradedPicks = data?.gradedPicks ?? [];
+    setSavedParlays((prev) => {
+      const synced = syncAllParlays(prev, gradedPicks);
+      if (JSON.stringify(synced) === JSON.stringify(prev)) {
+        return prev;
+      }
+      persistSavedParlays(synced);
+      return synced;
+    });
+  }, [data, isLoading]);
+
+  const savedParlaySummary = savedParlays.reduce((acc, parlay) => {
+    acc.total += 1;
+    acc[parlay.status] = (acc[parlay.status] ?? 0) + 1;
+    return acc;
+  }, { total: 0, pending: 0, inProgress: 0, won: 0, lost: 0 });
 
   return (
     <AppShell>
@@ -387,6 +529,117 @@ export default function Review() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {!isLoading && (
+        <Card className="mt-6">
+          <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-widest text-muted-foreground">Saved Parlays</div>
+              <CardTitle>Saved Parlays for Review</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Accuracy Review grading automatically updates matching saved parlay legs by player, market, and game.
+              </p>
+            </div>
+            {savedParlaySummary.total > 0 && (
+              <div className="flex flex-wrap gap-2 text-xs">
+                <Badge variant="outline">Pending: {savedParlaySummary.pending}</Badge>
+                <Badge variant="outline">In Progress: {savedParlaySummary.inProgress}</Badge>
+                <Badge variant="outline">Won: {savedParlaySummary.won}</Badge>
+                <Badge variant="outline">Lost: {savedParlaySummary.lost}</Badge>
+              </div>
+            )}
+          </CardHeader>
+          <CardContent>
+            {savedParlays.length === 0 ? (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                No saved parlays yet. Save parlays from the Parlays page and they will appear here for automatic review.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {[...savedParlays].reverse().map((parlay) => {
+                  const syncStatus = parlaySyncState[parlay.id] ?? {
+                    completedLegs: parlay.completedLegs ?? 0,
+                    totalLegs: parlay.totalLegs ?? parlay.legs?.length ?? 0,
+                    status: parlay.status,
+                  };
+                  const expanded = expandedParlayIds.has(parlay.id);
+                  return (
+                    <Card key={parlay.id}>
+                      <CardHeader className="gap-3 pb-3">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <CardTitle className="text-base font-bold">{parlay.name}</CardTitle>
+                              <Badge className={getSavedParlayStatusClass(syncStatus.status)}>
+                                {getSavedParlayStatusLabel(syncStatus.status)}
+                              </Badge>
+                              {parlay.source === "custom" && <Badge variant="outline">Custom</Badge>}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              Saved {formatSavedAt(parlay.savedAt)} · {syncStatus.totalLegs} legs
+                            </div>
+                            <div className="text-sm text-muted-foreground">
+                              Progress: {syncStatus.completedLegs}/{syncStatus.totalLegs} legs completed
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button variant="outline" size="sm" onClick={() => toggleSavedParlay(parlay.id)}>
+                              {expanded ? "Hide legs" : "Show legs"}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-muted-foreground hover:text-destructive"
+                              onClick={() => deleteSavedParlay(parlay.id)}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
+                      </CardHeader>
+                      {expanded && (
+                        <CardContent className="pt-0">
+                          <div className="overflow-x-auto">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead>Player</TableHead>
+                                  <TableHead>Market</TableHead>
+                                  <TableHead className="text-right">Projection</TableHead>
+                                  <TableHead className="text-right">Status</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {parlay.legs.map((leg) => (
+                                  <TableRow key={`${parlay.id}-${leg.predictionId ?? `${leg.playerId}-${leg.market}`}`}>
+                                    <TableCell className="font-medium">
+                                      {leg.player}
+                                      {leg.teamName && (
+                                        <span className="ml-2 text-xs font-normal text-muted-foreground">({leg.teamName})</span>
+                                      )}
+                                    </TableCell>
+                                    <TableCell>{getMarketLabel(leg.market, "short")}</TableCell>
+                                    <TableCell className="text-right tabular-nums">{formatLegProjection(leg)}</TableCell>
+                                    <TableCell className="text-right">
+                                      <Badge variant={leg.result === "pending" ? "outline" : leg.result === "hit" ? "default" : "destructive"}>
+                                        {getLegResultLabel(leg.result)}
+                                      </Badge>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        </CardContent>
+                      )}
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {!isLoading && (
