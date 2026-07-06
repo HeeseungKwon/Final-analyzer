@@ -97,11 +97,12 @@ function getSavedParlayStatusClass(status) {
 function savedParlaysEqual(currentParlays, nextParlays) {
   if (currentParlays.length !== nextParlays.length) return false;
 
-  return currentParlays.every((parlay, index) => {
-    const nextParlay = nextParlays[index];
+  const nextParlaysById = new Map(nextParlays.map((parlay) => [parlay.id, parlay]));
+
+  return currentParlays.every((parlay) => {
+    const nextParlay = nextParlaysById.get(parlay.id);
     if (!nextParlay) return false;
     if (
-      parlay.id !== nextParlay.id ||
       parlay.status !== nextParlay.status ||
       parlay.completedLegs !== nextParlay.completedLegs ||
       parlay.pendingLegs !== nextParlay.pendingLegs ||
@@ -351,11 +352,13 @@ export default function Review() {
     });
   }, [data, isLoading]);
 
-  const savedParlaySummary = savedParlays.reduce((acc, parlay) => {
-    acc.total += 1;
-    acc[parlay.status] = (acc[parlay.status] ?? 0) + 1;
-    return acc;
-  }, { total: 0, pending: 0, inProgress: 0, won: 0, lost: 0 });
+  const savedParlaySummary = useMemo(() => (
+    savedParlays.reduce((acc, parlay) => {
+      acc.total += 1;
+      acc[parlay.status] = (acc[parlay.status] ?? 0) + 1;
+      return acc;
+    }, { total: 0, pending: 0, inProgress: 0, won: 0, lost: 0 })
+  ), [savedParlays]);
   const displayedSavedParlays = useMemo(() => savedParlays.slice().reverse(), [savedParlays]);
 
   return (
