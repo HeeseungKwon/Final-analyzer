@@ -91,6 +91,13 @@ function probabilityProjection(p, features) {
   return null;
 }
 
+function probabilityFloorOrSmooth(floor, projection, threshold, minProb, maxProb) {
+  if (Number.isFinite(floor) && floor >= 0 && floor <= 1) {
+    return clamp(floor, 0, 1);
+  }
+  return clamp(smooth((projection - threshold) / 1.2, minProb, maxProb), 0, 1);
+}
+
 /**
  * Calculates the probability used in parlay leg combinations
  * Different markets use different blend ratios of projection and floor/ceiling
@@ -108,13 +115,13 @@ function legProbabilityFor(p) {
       return clamp(0.7 * p.projection + 0.3 * p.floor, 0, 1);
     case "total_bases":
       if (projectedProb != null) return clamp(0.7 * projectedProb + 0.3 * (features?.tbOver1_5Prob ?? p.floor), 0, 1);
-      return clamp(p.floor, 0, 1);
+      return probabilityFloorOrSmooth(p.floor, p.projection, 1.5, 0.35, 0.75);
     case "hrr_2":
       if (projectedProb != null) return clamp(0.7 * projectedProb + 0.3 * (features?.hrrOver1_5Prob ?? p.floor), 0, 1);
-      return clamp(p.floor, 0, 1);
+      return probabilityFloorOrSmooth(p.floor, p.projection, 2.5, 0.35, 0.75);
     case "hrr_3":
       if (projectedProb != null) return clamp(0.7 * projectedProb + 0.3 * (features?.hrrOver2_5Prob ?? p.floor), 0, 1);
-      return clamp(p.floor, 0, 1);
+      return probabilityFloorOrSmooth(p.floor, p.projection, 3.5, 0.3, 0.70);
     case "strikeouts":
       return clamp(smooth((p.projection - 6.5) / 3.0, 0.4, 0.8), 0, 1);
     default:
