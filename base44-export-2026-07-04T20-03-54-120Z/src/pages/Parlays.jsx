@@ -14,9 +14,14 @@ import { recalculateParlayStatus } from "@/lib/utils/parlaySync";
 
 const MARKET_SHORT = {
   hit_2: "2+ Hits",
+<<<<<<< HEAD
   hrr_2: "HRR 2.5",
   hrr_3: "HRR 3.5",
   total_bases: "TB 2.5",
+=======
+  hrr: "HRR O1.5/O2.5",
+  total_bases: "TB O1.5",
+>>>>>>> 62b7195 (작업 내용 저장)
   home_run: "HR",
   strikeouts: "K 6.5",
 };

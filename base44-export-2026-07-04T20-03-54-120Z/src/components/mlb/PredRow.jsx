@@ -70,6 +70,9 @@ export default function PredRow({ p, expanded, onToggle }) {
   const modelProb = p.projection;
   const vegasProb = features?.vegasHrProb ?? null;
   const parkProb = features?.parkHrProb ?? null;
+  const tbOver15Prob = features?.tbOver1_5Prob;
+  const hrrOver15Prob = features?.hrrOver1_5Prob;
+  const hrrOver25Prob = features?.hrrOver2_5Prob;
 
   return (
     <>
@@ -209,6 +212,32 @@ export default function PredRow({ p, expanded, onToggle }) {
                   </div>
                 </div>
               )}
+
+              {(p.market === "total_bases" && tbOver15Prob != null) || (p.market === "hrr" && (hrrOver15Prob != null || hrrOver25Prob != null)) ? (
+                <div className="border-t border-border/40 pt-2">
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Line Probabilities</div>
+                  <div className="space-y-1 text-xs">
+                    {p.market === "total_bases" && tbOver15Prob != null && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">TB O1.5:</span>
+                        <span className="font-semibold tabular-nums">{fmt(tbOver15Prob * 100, 1)}%</span>
+                      </div>
+                    )}
+                    {p.market === "hrr" && hrrOver15Prob != null && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">HRR O1.5:</span>
+                        <span className="font-semibold tabular-nums">{fmt(hrrOver15Prob * 100, 1)}%</span>
+                      </div>
+                    )}
+                    {p.market === "hrr" && hrrOver25Prob != null && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">HRR O2.5:</span>
+                        <span className="font-semibold tabular-nums">{fmt(hrrOver25Prob * 100, 1)}%</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </TableCell>
         </TableRow>

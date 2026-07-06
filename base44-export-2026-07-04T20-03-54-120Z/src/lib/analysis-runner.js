@@ -123,9 +123,11 @@ function styleForPortfolio(row) {
 }
 
 function rebalanceRecommendations(rows) {
-  const GLOBAL_MAX = 66;
-  const MAX_PER_PLAYER = 2;
+  const MIN_RECOMMEND_RATIO = 0.3;
+  const TARGET_UNIQUE_PLAYERS = 50;
+  const MAX_PER_PLAYER = 1;
   const MAX_PER_GAME = 6;
+  const POWER_MARKETS = new Set(["home_run", "hrr", "total_bases"]);
 
   const candidates = rows
     .map((row, idx) => ({
@@ -141,17 +143,26 @@ function rebalanceRecommendations(rows) {
   const byMarket = new Map();
   const byPlayer = new Map();
   const byGame = new Map();
+  const playerPowerTaken = new Set();
   const selected = new Set();
+
+  const eligiblePlayers = new Set(candidates.map((c) => c.row.player_id));
+  const targetCount = Math.min(
+    candidates.length,
+    Math.max(Math.ceil(candidates.length * MIN_RECOMMEND_RATIO), Math.min(TARGET_UNIQUE_PLAYERS, eligiblePlayers.size))
+  );
 
   const canTake = (c) => {
     if (selected.has(c.idx)) return false;
-    if (selected.size >= GLOBAL_MAX) return false;
+    if (selected.size >= targetCount) return false;
 
     const marketCount = byMarket.get(c.row.market) ?? 0;
     if (marketCount >= (MARKET_LIMITS[c.row.market] ?? 10)) return false;
 
     const playerCount = byPlayer.get(c.row.player_id) ?? 0;
     if (playerCount >= MAX_PER_PLAYER) return false;
+
+    if (POWER_MARKETS.has(c.row.market) && playerPowerTaken.has(c.row.player_id)) return false;
 
     const gameCount = byGame.get(c.row.game_pk) ?? 0;
     if (gameCount >= MAX_PER_GAME) return false;
@@ -164,13 +175,16 @@ function rebalanceRecommendations(rows) {
     byMarket.set(c.row.market, (byMarket.get(c.row.market) ?? 0) + 1);
     byPlayer.set(c.row.player_id, (byPlayer.get(c.row.player_id) ?? 0) + 1);
     byGame.set(c.row.game_pk, (byGame.get(c.row.game_pk) ?? 0) + 1);
+    if (POWER_MARKETS.has(c.row.market)) {
+      playerPowerTaken.add(c.row.player_id);
+    }
   };
 
   const targets = {
-    aggressive: Math.round(GLOBAL_MAX * PORTFOLIO_STYLE_WEIGHTS.aggressive),
-    neutral: Math.round(GLOBAL_MAX * PORTFOLIO_STYLE_WEIGHTS.neutral),
+    aggressive: Math.round(targetCount * PORTFOLIO_STYLE_WEIGHTS.aggressive),
+    neutral: Math.round(targetCount * PORTFOLIO_STYLE_WEIGHTS.neutral),
   };
-  targets.conservative = Math.max(0, GLOBAL_MAX - targets.aggressive - targets.neutral);
+  targets.conservative = Math.max(0, targetCount - targets.aggressive - targets.neutral);
 
   const styleBuckets = {
     aggressive: candidates.filter((c) => c.style === "aggressive"),
@@ -189,7 +203,7 @@ function rebalanceRecommendations(rows) {
   }
 
   for (const c of candidates) {
-    if (selected.size >= GLOBAL_MAX) break;
+    if (selected.size >= targetCount) break;
     if (!canTake(c)) continue;
     take(c);
   }
