@@ -17,14 +17,9 @@ import { useToast } from "@/components/ui/use-toast";
 const MARKETS = [
   { key: "all", label: "All" },
   { key: "hit_2", label: "2+ Hits" },
-<<<<<<< HEAD
   { key: "hrr_2", label: "HRR 2.5" },
   { key: "hrr_3", label: "HRR 3.5" },
   { key: "total_bases", label: "Total Bases" },
-=======
-  { key: "hrr", label: "HRR O1.5/O2.5" },
-  { key: "total_bases", label: "TB O1.5" },
->>>>>>> 62b7195 (작업 내용 저장)
   { key: "home_run", label: "Home Run" },
   { key: "strikeouts", label: "Strikeouts" },
 ];
@@ -32,16 +27,10 @@ const MARKETS = [
 const PROJECTION_UNITS = {
   hit_2: { label: "P(2+ hits)", unit: "probability", description: "Probability of ≥2 hits." },
   home_run: { label: "P(HR)", unit: "probability", description: "Probability of ≥1 home run." },
-<<<<<<< HEAD
   total_bases: { label: "Exp. total bases", unit: "count", description: "Expected total bases (line 2.5)." },
   hrr_2: { label: "Exp. H+R+RBI", unit: "count", description: "Expected Hits+Runs+RBIs (line 2.5)." },
   hrr_3: { label: "Exp. H+R+RBI", unit: "count", description: "Expected Hits+Runs+RBIs (line 3.5)." },
   strikeouts: { label: "Exp. K", unit: "count", description: "Expected strikeouts for the pitcher (line 6.5)." },
-=======
-  total_bases: { label: "Exp. total bases", unit: "count", description: "Expected total bases. Pick probability uses TB O1.5." },
-  hrr: { label: "Exp. H+R+RBI", unit: "count", description: "Expected Hits+Runs+RBIs with both HRR O1.5 and HRR O2.5 probabilities." },
-  strikeouts: { label: "Exp. K", unit: "count", description: "Expected strikeouts for the pitcher (line 5.5)." },
->>>>>>> 62b7195 (작업 내용 저장)
 };
 
 function todayStr() {

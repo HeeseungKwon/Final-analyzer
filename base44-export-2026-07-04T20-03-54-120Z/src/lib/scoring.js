@@ -2,14 +2,9 @@
 
 export const MARKET_LABELS = {
   hit_2: "2+ Hits",
-<<<<<<< HEAD
   hrr_2: "Hits+Runs+RBIs 2.5",
   hrr_3: "Hits+Runs+RBIs 3.5",
   total_bases: "Total Bases 2.5",
-=======
-  hrr: "HRR O1.5/O2.5",
-  total_bases: "TB O1.5",
->>>>>>> 62b7195 (작업 내용 저장)
   home_run: "Home Run",
   strikeouts: "Strikeouts 6.5",
 };
@@ -17,16 +12,10 @@ export const MARKET_LABELS = {
 export const MARKET_PROJECTION_UNIT = {
   hit_2: { unit: "probability", label: "P(2+ hits)", description: "Probability the hitter records 2 or more hits." },
   home_run: { unit: "probability", label: "P(HR)", description: "Probability the hitter hits at least 1 home run." },
-<<<<<<< HEAD
   total_bases: { unit: "count", label: "Exp. total bases", description: "Expected total bases (1B=1, 2B=2, 3B=3, HR=4). Line = 2.5." },
   hrr_2: { unit: "count", label: "Exp. H+R+RBI", description: "Expected Hits + Runs + RBIs combined. Line = 2.5." },
   hrr_3: { unit: "count", label: "Exp. H+R+RBI", description: "Expected Hits + Runs + RBIs combined. Line = 3.5." },
   strikeouts: { unit: "count", label: "Exp. K", description: "Expected strikeouts for the starting pitcher. Line = 6.5." },
-=======
-  total_bases: { unit: "count", label: "Exp. total bases", description: "Expected total bases (1B=1, 2B=2, 3B=3, HR=4). Pick line is TB O1.5." },
-  hrr: { unit: "count", label: "Exp. H+R+RBI", description: "Expected Hits + Runs + RBIs combined. Analyzer tracks both HRR O1.5 and HRR O2.5 probabilities." },
-  strikeouts: { unit: "count", label: "Exp. K", description: "Expected strikeouts for the starting pitcher. Line = 5.5." },
->>>>>>> 62b7195 (작업 내용 저장)
 };
 
 const LEAGUE = {
@@ -259,50 +248,6 @@ export function scoreHitter(name, ctx) {
   const triggerStrength = clamp((contactMult - 1) * 1.7 + (pitcherHrMult - 1) * 1.4 + recentHrDelta * 2.4, -1, 1);
 
   {
-<<<<<<< HEAD
-=======
-    const p = 1 - Math.pow(1 - hitRateAdj, expectedAB);
-    const floor = 1 - Math.pow(1 - clamp(hitRateAdj * 0.9, 0.08, 0.5), Math.max(1, expectedAB - 1));
-    const ceiling = 1 - Math.pow(1 - clamp(hitRateAdj * 1.1, 0.08, 0.55), expectedAB + 1);
-    const leagueBaseline = 1 - Math.pow(1 - LEAGUE.hitPerAB, expectedAB);
-    const seasonProjection = 1 - Math.pow(1 - hitPerABSeason, expectedAB);
-    const recentProjection = hitPerABRecent != null ? 1 - Math.pow(1 - hitPerABRecent, expectedAB) : seasonProjection;
-    const contextProjection = 1 - Math.pow(1 - clamp(hitPerAB * contactMult, 0.1, 0.5), expectedAB);
-    const ensemble = frameworkBlend({
-      market: "hit_1",
-      baseProjection: p,
-      leagueBaseline,
-      skillProjection: seasonProjection,
-      recentProjection,
-      contextProjection,
-      floor,
-      ceiling,
-    });
-    const pFinal = ensemble.projection;
-    out.push({
-      market: "hit_1",
-      confidence: toConfidence(pFinal, 0.64, 120),
-      projection: pFinal,
-      floor,
-      ceiling,
-      trigger,
-      triggerStrength,
-      features: baseFeatures(ctx, {
-        hitPerAB,
-        hitRateAdj,
-        expectedAB,
-        pOverLine: pFinal,
-        modelAgreement: ensemble.agreement,
-        framework: ensemble.components,
-      }),
-      dataQuality: dqBase,
-      recommended: false,
-      recScore: 0,
-    });
-  }
-
-  {
->>>>>>> 62b7195 (작업 내용 저장)
     const p = binomAtLeast(expectedAB, hitRateAdj, 2);
     const floor = binomAtLeast(Math.max(1, expectedAB - 1), clamp(hitRateAdj * 0.9, 0.08, 0.5), 2);
     const ceiling = binomAtLeast(expectedAB + 1, clamp(hitRateAdj * 1.1, 0.08, 0.55), 2);
@@ -423,16 +368,8 @@ export function scoreHitter(name, ctx) {
     const contextProjection = clamp(tbPerPA * contactMult * clamp(1 + (parkFactor - 100) / 100 * 0.25, 0.88, 1.15), 0.12, 1.1) * expectedPA;
     const ensemble = frameworkBlend({
       market: "total_bases",
-<<<<<<< HEAD
       confidence: toConfidence(pOver, 0.35, 150),
       projection: lambda,
-=======
-      baseProjection: lambda,
-      leagueBaseline,
-      skillProjection: seasonProjection,
-      recentProjection,
-      contextProjection,
->>>>>>> 62b7195 (작업 내용 저장)
       floor: lambda * 0.72,
       ceiling: lambda * 1.28,
     });
@@ -462,25 +399,11 @@ export function scoreHitter(name, ctx) {
 
   {
     const lambda = hrrPerPAAdj * expectedPA;
-<<<<<<< HEAD
     const pOver2 = poissonAtLeast(lambda, 3);
     out.push({
       market: "hrr_2",
       confidence: toConfidence(pOver2, 0.35, 150),
       projection: lambda,
-=======
-    const leagueBaseline = LEAGUE.hrrPerPA * expectedPA;
-    const seasonProjection = hrrPerPASeason * expectedPA;
-    const recentProjection = hrrPerPARecent != null ? hrrPerPARecent * expectedPA : seasonProjection;
-    const contextProjection = clamp(hrrPerPA * contactMult * clamp(1 + (parkFactor - 100) / 100 * 0.1, 0.92, 1.1), 0.15, 1.1) * expectedPA;
-    const ensemble = frameworkBlend({
-      market: "hrr",
-      baseProjection: lambda,
-      leagueBaseline,
-      skillProjection: seasonProjection,
-      recentProjection,
-      contextProjection,
->>>>>>> 62b7195 (작업 내용 저장)
       floor: lambda * 0.7,
       ceiling: lambda * 1.3,
     });
@@ -496,7 +419,6 @@ export function scoreHitter(name, ctx) {
       ceiling: lambdaFinal * 1.3,
       trigger,
       triggerStrength,
-<<<<<<< HEAD
       features: baseFeatures(ctx, { hrrPerPA, hrrPerPAAdj, pOverLine: pOver2 }),
       dataQuality: dqBase,
       recommended: false,
@@ -512,17 +434,6 @@ export function scoreHitter(name, ctx) {
       trigger,
       triggerStrength,
       features: baseFeatures(ctx, { hrrPerPA, hrrPerPAAdj, pOverLine: pOver3 }),
-=======
-      features: baseFeatures(ctx, {
-        hrrPerPA,
-        hrrPerPAAdj,
-        pOverLine: blendedHrrOver,
-        hrrOver1_5Prob: pOver15,
-        hrrOver2_5Prob: pOver25,
-        modelAgreement: ensemble.agreement,
-        framework: ensemble.components,
-      }),
->>>>>>> 62b7195 (작업 내용 저장)
       dataQuality: dqBase,
       recommended: false,
       recScore: 0,
@@ -530,12 +441,7 @@ export function scoreHitter(name, ctx) {
   }
 
   for (const s of out) {
-<<<<<<< HEAD
     const pOver = s.features?.pOverLine ?? (s.market === "hit_2" || s.market === "home_run" ? s.projection : 0.5);
-=======
-    const pOver = s.features?.pOverLine ?? (s.market === "hit_1" || s.market === "hit_2" || s.market === "home_run" ? s.projection : 0.5);
-    const agreement = Number(s.features?.modelAgreement ?? 0.5);
->>>>>>> 62b7195 (작업 내용 저장)
     if (s.market === "home_run") {
       const liftVsPark = s.features?.liftVsPark ?? 0;
       const certainty = Math.max(0, 1 - (s.ceiling - s.floor) * 3.5);
@@ -548,11 +454,7 @@ export function scoreHitter(name, ctx) {
         Math.max(0, liftVsPark) * 110 +
         Math.max(0, s.triggerStrength) * 14 +
         certainty * 10 +
-<<<<<<< HEAD
         verdictBonus;
-=======
-        agreement * 8;
->>>>>>> 62b7195 (작업 내용 저장)
       s.recScore = clamp(recScore, 0, 100);
       s.recommended = s.recScore >= 52 && s.dataQuality !== "missing";
     } else {
@@ -584,53 +486,22 @@ export function scorePitcher(name, ctx) {
   const expectedIP = ctx.expectedIP ?? clamp((st.gs ?? 0) > 0 ? (st.ip ?? 0) / (st.gs ?? 1) : 5.5, 4.5, 7.0);
   const expectedBF = expectedIP * 4.2;
   const lambdaK = expectedBF * kRateAdj;
-<<<<<<< HEAD
   const pOver = poissonAtLeast(lambdaK, 7);
-=======
-  const floor = lambdaK * 0.72;
-  const ceiling = lambdaK * 1.28;
-  const leagueBaseline = expectedBF * leagueK;
-  const seasonProjection = expectedBF * kRateSeason;
-  const contextProjection = expectedBF * clamp(kRateSeason * matchupMult, 0.12, 0.45);
-  const ensemble = frameworkBlend({
-    market: "strikeouts",
-    baseProjection: lambdaK,
-    leagueBaseline,
-    skillProjection: seasonProjection,
-    recentProjection: seasonProjection,
-    contextProjection,
-    floor,
-    ceiling,
-  });
-  const lambdaFinal = ensemble.projection;
-  const pOver = poissonAtLeast(lambdaFinal, 6);
->>>>>>> 62b7195 (작업 내용 저장)
 
   const trigger =
     oppK > leagueK + 0.02
       ? `high-K offense (${(oppK * 100).toFixed(1)}%)`
       : oppK < leagueK - 0.02
         ? `low-K offense (${(oppK * 100).toFixed(1)}%)`
-<<<<<<< HEAD
         : `K model ${(lambdaK).toFixed(2)} vs line 6.5`;
-=======
-          : `K model ${(lambdaFinal).toFixed(2)} vs line 5.5`;
->>>>>>> 62b7195 (작업 내용 저장)
   const triggerStrength = clamp((matchupMult - 1) * 2.2, -1, 1);
 
   const pick = {
     market: "strikeouts",
-<<<<<<< HEAD
     confidence: toConfidence(pOver, 0.35, 170),
     projection: lambdaK,
     floor: lambdaK * 0.72,
     ceiling: lambdaK * 1.28,
-=======
-    confidence: toConfidence(pOver, 0.5, 160),
-    projection: lambdaFinal,
-    floor: lambdaFinal * 0.72,
-    ceiling: lambdaFinal * 1.28,
->>>>>>> 62b7195 (작업 내용 저장)
     trigger,
     triggerStrength,
     features: {
