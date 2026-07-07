@@ -27,6 +27,8 @@ const LEAGUE_AVG = {
 const LEAGUE_AVG_RUNS_PER_GAME = 4.5;
 const LEAGUE_AVG_BARREL_PCT = 0.075;
 const STRIKEOUT_MARKET = "strikeouts";
+const MIN_PROBABILITY = 0.01;
+const MAX_PROBABILITY = 0.99;
 // 10th/90th percentile bands span ~2.56 standard deviations in a normal model.
 const INFERRED_STDDEV_Z_SPREAD = 2.56;
 // Keep inferred strikeout distributions from collapsing unrealistically tight.
@@ -95,11 +97,9 @@ function normalCdf(x, mean = 0, stdDev = 1) {
   return 0.5 * (1 + erf((x - mean) / (stdDev * Math.sqrt(2))));
 }
 
-function toConfidence(prob, anchor = 0.5, slope = 120) {
-  const midpoint = clamp(Number(anchor) || 0.5, 0, 1);
-  const probability = clamp(Number(prob) || 0, 0, 1);
-  const steepness = Math.max(1, Number(slope) || 120) / 18;
-  return clamp(100 / (1 + Math.exp(-(probability - midpoint) * steepness)), 0, 100);
+function toConfidence(prob) {
+  const p = Number(prob);
+  return Math.round(clamp(Number.isFinite(p) ? p : 0, 0, 1) * 100);
 }
 
 /**
@@ -400,11 +400,11 @@ export function scoreHitterV2(name, ctx) {
   const probs = computePropProbabilities(batter, pitcher, gameCtx);
   
   const markets = [
-    { key: "hit_2", label: "2+ Hits", prob: probs["2+ Hits"], anchor: 0.34, slope: 150 },
-    { key: "total_bases", label: "TB O1.5", prob: probs["2+ Total Bases"], anchor: 0.33, slope: 155 },
-    { key: "hrr_2", label: "HRR O1.5", prob: probs["2+ HRR"], anchor: 0.30, slope: 160 },
-    { key: "hrr_3", label: "HRR O2.5", prob: probs["3+ HRR"], anchor: 0.17, slope: 200 },
-    { key: "home_run", label: "Home Run", prob: probs["1+ HR"], anchor: 0.10, slope: 280 },
+    { key: "hit_2", label: "2+ Hits", prob: probs["2+ Hits"] },
+    { key: "total_bases", label: "TB O1.5", prob: probs["2+ Total Bases"] },
+    { key: "hrr_2", label: "HRR O1.5", prob: probs["2+ HRR"] },
+    { key: "hrr_3", label: "HRR O2.5", prob: probs["3+ HRR"] },
+    { key: "home_run", label: "Home Run", prob: probs["1+ HR"] },
   ];
   
   const trigger = `HR ${(batter.hr * 100).toFixed(1)}%, Contact ${(batter["1b"] * 100).toFixed(1)}%`;
@@ -416,7 +416,7 @@ export function scoreHitterV2(name, ctx) {
     
     out.push({
       market: m.key,
-      confidence: toConfidence(m.prob, m.anchor, m.slope),
+      confidence: toConfidence(m.prob),
       projection: m.prob,
       floor,
       ceiling,
@@ -456,12 +456,18 @@ export function scorePitcherV2(name, ctx) {
   const trigger = oppK > LEAGUE_AVG.k + 0.02 ? `high-K offense (${(oppK * 100).toFixed(1)}%)` : `${kPer9.toFixed(1)} K/9`;
   const triggerStrength = clamp((matchupMult - 1) * 3, -1, 1);
   
+  const strikeoutLine = ctx.strikeoutLine ?? 5.5;
+  const kFloor = projK * 0.7;
+  const kCeiling = projK * 1.35;
+  const kStdDev = Math.max(MIN_INFERRED_STDDEV, Math.abs(kCeiling - kFloor) / INFERRED_STDDEV_Z_SPREAD);
+  const strikeoutProb = clamp(1 - normalCdf(strikeoutLine, projK, kStdDev), MIN_PROBABILITY, MAX_PROBABILITY);
+
   out.push({
     market: "strikeouts",
-    confidence: toConfidence(projK / 9, 0.6, 80),
+    confidence: toConfidence(strikeoutProb),
     projection: projK,
-    floor: projK * 0.7,
-    ceiling: projK * 1.35,
+    floor: kFloor,
+    ceiling: kCeiling,
     trigger,
     triggerStrength,
     features: {
@@ -495,7 +501,7 @@ function inferModelProbability({ market, projection, floor, ceiling, marketLine 
       ? Math.max(MIN_INFERRED_STDDEV, Math.abs(ceilingValue - floorValue) / INFERRED_STDDEV_Z_SPREAD)
       : Math.max(MIN_INFERRED_STDDEV, projectedValue * PROJECTION_STDDEV_RATIO);
     const threshold = line ?? 5.5;
-    return clamp(1 - normalCdf(threshold, projectedValue, inferredStdDev), 0.01, 0.99);
+    return clamp(1 - normalCdf(threshold, projectedValue, inferredStdDev), MIN_PROBABILITY, MAX_PROBABILITY);
   }
 
   return clamp(Number.isFinite(projectedValue) ? projectedValue : 0, 0, 1);
