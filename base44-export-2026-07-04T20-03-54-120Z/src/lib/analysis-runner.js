@@ -341,7 +341,7 @@ export async function runAnalysis(dateArg, onProgress) {
             // Enrich with market-specific projection scores
             if (simulationData) {
               try {
-                const oppTeamStats = {
+                const offensiveContext = {
                   impliedRuns: baseCtx.teamImpliedTotal ?? 4.5,
                   obpAhead: baseCtx.onbaseRateAhead ?? 0.320,
                   obpBehind: baseCtx.onbaseRateBehind ?? 0.310,
@@ -361,7 +361,7 @@ export async function runAnalysis(dateArg, onProgress) {
                   baseCtx,
                   oppPitcherStats,
                   s.market,
-                  oppTeamStats,
+                  offensiveContext,
                   slateNorms
                 );
                 predRow = enriched;

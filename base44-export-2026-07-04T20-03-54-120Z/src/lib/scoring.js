@@ -26,7 +26,7 @@ const LEAGUE_AVG = {
 
 const LEAGUE_AVG_RUNS_PER_GAME = 4.5;
 const LEAGUE_AVG_BARREL_PCT = 0.075;
-const HIT_TO_SINGLE_ADJUSTMENT_FACTOR = 0.85;
+const ESTIMATED_SINGLE_SHARE_OF_HITS = 0.85;
 const STRIKEOUT_MARKET = "strikeouts";
 const MIN_PROBABILITY = 0.01;
 const MAX_PROBABILITY = 0.99;
@@ -368,8 +368,8 @@ function buildPitcherRates(ctx) {
   const hrPerBfFallback = Number(ctx?.oppPitcherHrPerBF);
 
   const singleRate = hasPitcherStats
-    // hits_allowed includes singles + extra-base hits; scale by adjustment factor to estimate 1B/BF.
-    ? Math.max(0, statHitsAllowed / bf / HIT_TO_SINGLE_ADJUSTMENT_FACTOR)
+    // hits_allowed includes singles + extra-base hits; estimate 1B/BF as ~85% of total hits/BF.
+    ? Math.max(0, (statHitsAllowed * ESTIMATED_SINGLE_SHARE_OF_HITS) / bf)
     : LEAGUE_AVG["1b"];
   const hrRate = hasPitcherStats
     ? Math.max(0, statHrAllowed / bf)
