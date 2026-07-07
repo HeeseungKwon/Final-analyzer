@@ -102,6 +102,14 @@ const MARKET_PROBABILITY_CALIBRATION = {
   "hrr_3": { anchor: 0.17, slope: 220 },
 };
 
+const DEFAULT_MARKET_PROBABILITY_CALIBRATION = MARKET_PROBABILITY_CALIBRATION["hrr_2"];
+
+const CONFIDENCE_QUALITY_FLOOR = {
+  missing: 35,
+  partial: 48,
+  ok: 58,
+};
+
 /**
  * Sample size credibility using logistic curve
  * Returns 0-1 where 1 = maximum credibility
@@ -170,12 +178,7 @@ export function calculateConfidenceScore(ctx, dataQuality, oppPitcherStats) {
   const multiplier = qualityMultipliers[dataQuality] ?? 1.0;
   score *= multiplier;
 
-  const qualityFloor = {
-    missing: 35,
-    partial: 48,
-    ok: 58,
-  };
-  score = Math.max(score, qualityFloor[dataQuality] ?? 45);
+  score = Math.max(score, CONFIDENCE_QUALITY_FLOOR[dataQuality] ?? CONFIDENCE_QUALITY_FLOOR.missing);
 
   return clamp(score, 0, 100);
 }
@@ -317,7 +320,7 @@ export function calculateMarketProjectionScore(
   const weights = MARKET_WEIGHTS[market] || MARKET_WEIGHTS["2+ Hits"];
 
   // Get base metrics
-  const marketCalibration = MARKET_PROBABILITY_CALIBRATION[market] ?? { anchor: 0.30, slope: 180 };
+  const marketCalibration = MARKET_PROBABILITY_CALIBRATION[market] ?? DEFAULT_MARKET_PROBABILITY_CALIBRATION;
   const modelProbScore = toConfidence(
     Number(prediction.projection ?? 0),
     marketCalibration.anchor,
