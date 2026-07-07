@@ -189,7 +189,7 @@ export function calculateConfidenceScore(ctx, dataQuality, oppPitcherStats) {
   score *= multiplier;
 
   const qualityFloor = CONFIDENCE_QUALITY_FLOOR[dataQuality];
-  if (qualityFloor == null && dataQuality != null) {
+  if (qualityFloor === undefined && dataQuality !== null && dataQuality !== undefined) {
     console.warn(`Unknown data quality in confidence scoring: ${dataQuality}`);
   }
   score = Math.max(score, qualityFloor ?? CONFIDENCE_QUALITY_FLOOR.missing);
