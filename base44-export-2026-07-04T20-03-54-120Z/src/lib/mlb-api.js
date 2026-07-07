@@ -157,6 +157,11 @@ export async function fetchPitcherStats(personId, season) {
           bb: toNum(split.baseOnBalls),
           hits_allowed: toNum(split.hits),
           hr_allowed: toNum(split.homeRuns),
+          gb_fb_ratio: (() => {
+            const gb = toNum(split.groundOuts);
+            const fb = toNum(split.airOuts);
+            return fb > 0 ? gb / fb : null;
+          })(),
           era: toNum(split.era),
           whip: toNum(split.whip),
           k_per_9: toNum(split.strikeoutsPer9Inn),

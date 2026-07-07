@@ -9,7 +9,6 @@ import {
   currentMlbSeason,
 } from "@/lib/mlb-api";
 import { scoreHitter, scorePitcher, parkFactorFor } from "@/lib/scoring";
-import { scoreHitterLegacy, scorePitcherLegacy } from "@/lib/scoring-legacy";
 
 const PORTFOLIO_MARKET_LIMITS = {
   hit_2: 10,
@@ -178,7 +177,6 @@ export async function runOneTimeABComparison(date, onProgress) {
     return hitterRecentCache.get(pid);
   }
 
-  const legacyPicks = [];
   const modernPicks = [];
 
   let processed = 0;
@@ -213,23 +211,8 @@ export async function runOneTimeABComparison(date, onProgress) {
           vegasHrProb: null,
         };
 
-        const legacyScores = scoreHitterLegacy(lp.fullName, ctx).filter((s) => s.recommended);
         const modernScores = scoreHitter(lp.fullName, ctx).filter((s) => s.recommended);
 
-        for (const s of legacyScores) {
-          legacyPicks.push({
-            algorithm: "legacy",
-            game_pk: g.game_pk,
-            game_date: date,
-            player_id: lp.id,
-            player_name: lp.fullName,
-            team_name: teamName,
-            market: s.market,
-            rec_score: s.recScore,
-            confidence: s.confidence,
-            hit: null,
-          });
-        }
         for (const s of modernScores) {
           modernPicks.push({
             algorithm: "modern",
@@ -264,12 +247,11 @@ export async function runOneTimeABComparison(date, onProgress) {
         expectedIP: 5.5,
       };
 
-      const legacyScores = scorePitcherLegacy(pname, pctx).filter((s) => s.recommended);
       const modernScores = scorePitcher(pname, pctx).filter((s) => s.recommended);
 
-      for (const s of legacyScores) {
-        legacyPicks.push({
-          algorithm: "legacy",
+      for (const s of modernScores) {
+        modernPicks.push({
+          algorithm: "modern",
           game_pk: g.game_pk,
           game_date: date,
           player_id: pid,
@@ -300,7 +282,7 @@ export async function runOneTimeABComparison(date, onProgress) {
 
   log("A/B grading picks against boxscores...");
   const boxCache = new Map();
-  const allPicks = [...legacyPicks, ...modernPicks];
+  const allPicks = [...modernPicks];
   for (const pick of allPicks) {
     if (!boxCache.has(pick.game_pk)) {
       boxCache.set(pick.game_pk, await fetchBoxscore(pick.game_pk));
@@ -317,39 +299,15 @@ export async function runOneTimeABComparison(date, onProgress) {
     pick.hit = hit;
   }
 
-  const legacySummary = summarize(legacyPicks);
   const modernSummary = summarize(modernPicks);
 
-  const legacyPortfolio = selectCappedPortfolio(legacyPicks);
   const modernPortfolio = selectCappedPortfolio(modernPicks);
 
-  const legacyPortfolioSummary = summarize(legacyPortfolio);
   const modernPortfolioSummary = summarize(modernPortfolio);
-
-  const legacyMap = new Map(legacyPortfolio.map((p) => [keyForPick(p), p]));
-  const modernMap = new Map(modernPortfolio.map((p) => [keyForPick(p), p]));
-
-  const overlap = [];
-  for (const [k, lp] of legacyMap.entries()) {
-    if (modernMap.has(k)) overlap.push(lp);
-  }
-
-  const legacyOnly = legacyPortfolio
-    .filter((p) => !modernMap.has(keyForPick(p)))
-    .sort((a, b) => (b.rec_score ?? 0) - (a.rec_score ?? 0));
-  const modernOnly = modernPortfolio
-    .filter((p) => !legacyMap.has(keyForPick(p)))
-    .sort((a, b) => (b.rec_score ?? 0) - (a.rec_score ?? 0));
 
   return {
     date,
-    legacyRaw: legacySummary,
-    modernRaw: modernSummary,
-    legacy: legacyPortfolioSummary,
     modern: modernPortfolioSummary,
-    overlapCount: overlap.length,
-    legacyOnly,
-    modernOnly,
-    note: "Raw model recommendations and capped portfolio recommendations are both shown. Hit rate uses graded picks with available boxscore stats.",
+    note: "Using Monte Carlo v2 algorithm only.",
   };
 }
