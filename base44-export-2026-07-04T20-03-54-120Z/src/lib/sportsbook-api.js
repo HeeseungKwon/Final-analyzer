@@ -4,6 +4,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 // representation differences (1.5 vs 1.49/1.6) do not block a usable match.
 const LINE_MATCH_TOLERANCE = 0.11;
 const MIN_CANDIDATE_SCORE = 7;
+const DEFAULT_FALLBACK_ODDS = -110;
 
 const DEFAULT_IMPLIED_PROBABILITIES = {
   hit_2: 0.33,
@@ -57,7 +58,7 @@ function parseLineValue(value) {
 
 function impliedToAmerican(probability) {
   const p = Number(probability);
-  if (!Number.isFinite(p) || p <= 0 || p >= 1) return -110;
+  if (!Number.isFinite(p) || p <= 0 || p >= 1) return DEFAULT_FALLBACK_ODDS;
   if (p >= 0.5) return -Math.round((p / (1 - p)) * 100);
   return Math.round(((1 - p) / p) * 100);
 }

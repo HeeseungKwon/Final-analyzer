@@ -36,7 +36,7 @@ function rebalanceRecommendations(rows) {
     // legacy `rec_score` field, so edge is mirrored there as percentage points
     // (for example +6.5). All new edge-aware consumers should prefer
     // `features.edge` / `features.modelEdge`.
-    row.rec_score = Math.round((Number(features.edge ?? 0) * 100) * 100) / 100;
+    row.rec_score = edgeToRecScore(features.edge);
     row.recommended = Boolean(features.recommended ?? row.recommended);
   });
 }
@@ -79,6 +79,10 @@ function expectedPAForBattingOrder(order) {
   if (order <= 5) return 4.2;
   if (order <= 7) return 3.9;
   return 3.6;
+}
+
+function edgeToRecScore(edge) {
+  return Math.round(Number(edge ?? 0) * 10000) / 100;
 }
 
 function buildEdgeFeatures(baseFeatures, edgeMetrics, oddsInfo) {
@@ -308,7 +312,7 @@ export async function runAnalysis(dateArg, onProgress) {
               features: JSON.stringify(features),
               data_quality: s.dataQuality,
               recommended: edgeMetrics.recommended,
-              rec_score: Math.round(edgeMetrics.edge * 10000) / 100,
+              rec_score: edgeToRecScore(edgeMetrics.edge),
               verdict: edgeMetrics.recommended ? "recommended" : edgeMetrics.edge > 0 ? "marginal" : "avoid",
               verdict_note: `Model ${(edgeMetrics.modelProbability * 100).toFixed(1)}% vs market ${(edgeMetrics.impliedProbability * 100).toFixed(1)}% (${edgeMetrics.marketOdds > 0 ? "+" : ""}${edgeMetrics.marketOdds})`,
             };
@@ -420,7 +424,7 @@ export async function runAnalysis(dateArg, onProgress) {
             features: JSON.stringify(buildEdgeFeatures(s.features, edgeMetrics, oddsInfo)),
             data_quality: s.dataQuality,
             recommended: edgeMetrics.recommended,
-            rec_score: Math.round(edgeMetrics.edge * 10000) / 100,
+            rec_score: edgeToRecScore(edgeMetrics.edge),
             verdict: edgeMetrics.recommended ? "recommended" : edgeMetrics.edge > 0 ? "marginal" : "avoid",
             verdict_note: `Model ${(edgeMetrics.modelProbability * 100).toFixed(1)}% vs market ${(edgeMetrics.impliedProbability * 100).toFixed(1)}% (${edgeMetrics.marketOdds > 0 ? "+" : ""}${edgeMetrics.marketOdds})`,
           });

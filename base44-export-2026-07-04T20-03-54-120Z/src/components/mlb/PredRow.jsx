@@ -21,7 +21,7 @@ import { computePickGrade, gradeColorClass } from "@/lib/utils/pickGrade";
 
 function fmt(n, digits = 2) {
   const v = Number(n);
-  if (!isFinite(v)) return "—";
+  if (!Number.isFinite(v)) return "—";
   return v.toFixed(digits);
 }
 
@@ -53,13 +53,13 @@ function verdictColor(verdict) {
 
 function fmtPct(n, digits = 1) {
   const v = Number(n);
-  if (!isFinite(v)) return "—";
+  if (!Number.isFinite(v)) return "—";
   return `${(v * 100).toFixed(digits)}%`;
 }
 
 function fmtAmerican(odds) {
   const value = Number(odds);
-  if (!isFinite(value) || value === 0) return "—";
+  if (!Number.isFinite(value) || value === 0) return "—";
   return value > 0 ? `+${value}` : `${value}`;
 }
 

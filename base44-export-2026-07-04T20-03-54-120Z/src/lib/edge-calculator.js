@@ -29,8 +29,7 @@ export function calculateKelly(modelProb, decimalOdds) {
 }
 
 export function calculateROI(modelProb, impliedProb, americanOdds) {
-  const decimalOdds = americanToDecimal(americanOdds)
-    ?? (Number(impliedProb) > 0 ? 1 / Number(impliedProb) : null);
+  const decimalOdds = americanToDecimal(americanOdds);
 
   if (!Number.isFinite(decimalOdds) || decimalOdds <= 1) {
     return { expectedValue: 0, roi: 0, payout: 0, decimalOdds: null };

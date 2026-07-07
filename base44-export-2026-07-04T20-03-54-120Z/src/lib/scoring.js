@@ -26,6 +26,7 @@ const LEAGUE_AVG = {
 
 const LEAGUE_AVG_RUNS_PER_GAME = 4.5;
 const LEAGUE_AVG_BARREL_PCT = 0.075;
+const STRIKEOUT_MARKET = "strikeouts";
 // 10th/90th percentile bands span ~2.56 standard deviations in a normal model.
 const INFERRED_STDDEV_Z_SPREAD = 2.56;
 // Keep inferred strikeout distributions from collapsing unrealistically tight.
@@ -478,15 +479,15 @@ export function scorePitcherV2(name, ctx) {
 
 function inferModelProbability({ market, projection, floor, ceiling, marketLine }) {
   const projectedValue = Number(projection);
-  if (Number.isFinite(projectedValue) && projectedValue >= 0 && projectedValue <= 1 && market !== "strikeouts") {
+  if (Number.isFinite(projectedValue) && projectedValue >= 0 && projectedValue <= 1 && market !== STRIKEOUT_MARKET) {
     return clamp(projectedValue, 0, 1);
   }
 
   const line = Number.isFinite(Number(marketLine)) ? Number(marketLine) : null;
-  if (market === "strikeouts" && Number.isFinite(projectedValue)) {
+  if (market === STRIKEOUT_MARKET && Number.isFinite(projectedValue)) {
     const floorValue = Number(floor);
     const ceilingValue = Number(ceiling);
-    const inferredStdDev = Number.isFinite(ceilingValue - floorValue)
+    const inferredStdDev = Number.isFinite(floorValue) && Number.isFinite(ceilingValue)
       ? Math.max(MIN_INFERRED_STDDEV, Math.abs(ceilingValue - floorValue) / INFERRED_STDDEV_Z_SPREAD)
       : Math.max(MIN_INFERRED_STDDEV, projectedValue * PROJECTION_STDDEV_RATIO);
     const threshold = line ?? 5.5;
