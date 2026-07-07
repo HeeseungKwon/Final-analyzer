@@ -39,7 +39,9 @@ const MIN_PARLAY_EV = -0.18;
 const MAX_PARLAY_OVERLAP = 0.67;
 const MAX_RANKED_POOL_SIZE = 18;
 const MIN_PICK_EDGE = -0.04;
+const MIN_STRUCTURED_POOL_SIZE = 4;
 const MIN_HOME_RUN_POOL_SIZE = 6;
+const MAX_HOME_RUN_POOL_SIZE = Math.ceil(MAX_RANKED_POOL_SIZE / 2);
 
 const CORRELATION_COMPONENTS = {
   base: 0.03,
@@ -489,10 +491,10 @@ export function buildParlays(predictions, selectedGamePks) {
     const pkSet = selectedGamePks instanceof Set ? selectedGamePks : new Set(selectedGamePks);
     if (pkSet.size === 0) return [];
     const strictPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality === "ok" && p.recommended);
-    const fallbackPool = strictPool.length >= 4
+    const fallbackPool = strictPool.length >= MIN_STRUCTURED_POOL_SIZE
       ? strictPool
       : predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing");
-    if (fallbackPool.length < 4) return [];
+    if (fallbackPool.length < MIN_STRUCTURED_POOL_SIZE) return [];
 
     const scoredPool = [...fallbackPool]
       .map((p) => {
@@ -514,8 +516,8 @@ export function buildParlays(predictions, selectedGamePks) {
       .slice(0, MAX_RANKED_POOL_SIZE);
     const homeRunPool = scoredPool
       .filter((p) => p.market === "home_run")
-      .slice(0, Math.max(MIN_HOME_RUN_POOL_SIZE, Math.ceil(MAX_RANKED_POOL_SIZE / 2)));
-    if (corePool.length < 4) return [];
+      .slice(0, Math.max(MIN_HOME_RUN_POOL_SIZE, MAX_HOME_RUN_POOL_SIZE));
+    if (corePool.length < MIN_STRUCTURED_POOL_SIZE) return [];
 
     const structuredParlays = [];
 

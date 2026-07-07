@@ -48,6 +48,9 @@ const MARKET_RECOMMENDATION_FOCUS_BONUS = {
   hrr_3: 6,
   hit_2: 4,
   total_bases: 2,
+  // Home runs stay supported, but the main hitter recommendation flow now
+  // prioritizes higher-probability HRR/hits/TB props and surfaces HR picks
+  // separately instead of letting them dominate the portfolio.
   home_run: -8,
 };
 const PRIORITY_PENALTY_FACTOR = 0.75;

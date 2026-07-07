@@ -36,6 +36,12 @@ function sortRecommendedPicksByPriority(a, b) {
   );
 }
 
+function formatProjectionForMarket(projection, market) {
+  return market === "home_run" || market === "hit_2"
+    ? `${(projection * 100).toFixed(1)}%`
+    : Number(projection).toFixed(2);
+}
+
 function ParlayCard({ parlay, selectable, selected, onToggle, onDelete }) {
   const good = parlay.edge > 0;
   return (
@@ -233,9 +239,7 @@ export default function Parlays() {
                       <TableCell>{getMarketLabel(p.market, "short")}</TableCell>
                       <TableCell className="text-right tabular-nums">{Number(p.confidence).toFixed(0)}</TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {p.market === "home_run" || p.market === "hit_2"
-                          ? `${(p.projection * 100).toFixed(1)}%`
-                          : Number(p.projection).toFixed(2)}
+                        {formatProjectionForMarket(p.projection, p.market)}
                       </TableCell>
                       <TableCell className="text-right">
                         <span className={"inline-block rounded px-1.5 py-0.5 text-xs font-bold " + gradeColorClass(letterGrade)}>
