@@ -13,8 +13,7 @@ import {
   todayIsoDate,
 } from "@/lib/mlb-api";
 import { scoreHitter, scorePitcher, parkFactorFor } from "@/lib/scoring";
-import { scoreHitterLegacy, scorePitcherLegacy } from "@/lib/scoring-legacy";
-import { getRecommendationMarketPriority, isProbabilityMarket } from "@/lib/constants/markets";
+import { getRecommendationMarketPriority } from "@/lib/constants/markets";
 
 // Support for gradual rollout: wrap new engine calls with fallback
 const USE_NEW_ENGINE = true;
@@ -70,29 +69,11 @@ const PORTFOLIO_STYLE_WEIGHTS = {
   conservative: 0.2,
 };
 
-const MARKET_POPULARITY = {
-  strikeouts: 0.9,
-  hrr_2: 0.82,
-  hrr_3: 0.78,
-  total_bases: 0.78,
-  hit_2: 0.72,
-  home_run: 0.62,
-};
-
 const REDUNDANCY_RULES = {
   maxPicksPerPlayer: 2,
   maxPerGame: 6,
   hrr3EdgeDelta: 0.015,
   hrr3MinConfidence: 58,
-};
-
-const CONSENSUS_THRESHOLD = {
-  hit_2: 62,
-  hrr_2: 61,
-  hrr_3: 61,
-  total_bases: 60,
-  strikeouts: 61,
-  home_run: 54,
 };
 
 function parseFeatures(raw) {
@@ -107,7 +88,6 @@ function parseFeatures(raw) {
 
 function rankForPortfolio(row) {
   const features = parseFeatures(row.features);
-  const consensusBonus = features.consensus_legacy ? 12 : 0;
   const marketBonus = MARKET_TRUST_BONUS[row.market] ?? 0;
   const focusBonus = MARKET_RECOMMENDATION_FOCUS_BONUS[row.market] ?? 0;
   const modelEdge = Number(features.modelEdge ?? 0);
@@ -131,7 +111,7 @@ function rankForPortfolio(row) {
 
   const priorityPenalty = getRecommendationMarketPriority(row.market) * PRIORITY_PENALTY_FACTOR;
 
-  return (row.rec_score ?? 0) + consensusBonus + marketBonus + focusBonus + pOverBonus + edgeBonus + certaintyBonus + marketAlignment + verdictBonus - variancePenalty - priorityPenalty;
+  return (row.rec_score ?? 0) + marketBonus + focusBonus + pOverBonus + edgeBonus + certaintyBonus + marketAlignment + verdictBonus - variancePenalty - priorityPenalty;
 }
 
 function styleForPortfolio(row) {
@@ -404,78 +384,6 @@ function expectedPAForBattingOrder(order) {
   return 3.6;
 }
 
-function projectionDistance(a, b, market) {
-  const x = Number(a ?? 0);
-  const y = Number(b ?? 0);
-  if (isProbabilityMarket(market)) {
-    return Math.min(1, Math.abs(x - y) / 0.22);
-  }
-  if (market === "strikeouts") {
-    return Math.min(1, Math.abs(x - y) / 2.2);
-  }
-  return Math.min(1, Math.abs(x - y) / 1.6);
-}
-
-function buildMarketReliability(accuracyRows) {
-  const agg = {};
-  for (const r of accuracyRows ?? []) {
-    const m = r.market;
-    if (!agg[m]) agg[m] = { n: 0, hits: 0 };
-    agg[m].n += r.n_predictions ?? 0;
-    agg[m].hits += r.n_hits ?? 0;
-  }
-  const rel = {};
-  for (const [m, v] of Object.entries(agg)) {
-    rel[m] = v.n > 0 ? v.hits / v.n : 0.5;
-  }
-  return rel;
-}
-
-function toLegacyMap(scores) {
-  const map = new Map();
-  for (const s of scores) map.set(s.market, s);
-  return map;
-}
-
-function applyHybridConsensus(scores, legacyMap, marketReliability) {
-  return scores.map((s) => {
-    const legacy = legacyMap.get(s.market);
-    const legacyRec = legacy?.recScore ?? s.recScore;
-    const reliability = marketReliability[s.market] ?? 0.5;
-    const popularity = MARKET_POPULARITY[s.market] ?? 0.7;
-    const agree = 1 - projectionDistance(s.projection, legacy?.projection ?? s.projection, s.market);
-
-    const hybridRec =
-      s.recScore * 0.55 +
-      legacyRec * 0.23 +
-      agree * 100 * 0.12 +
-      reliability * 100 * 0.07 +
-      popularity * 100 * 0.03;
-
-    const threshold = CONSENSUS_THRESHOLD[s.market] ?? 75;
-    const consensusGate =
-      s.market === "home_run"
-        ? (s.recScore >= 48 && legacyRec >= 42 && agree >= 0.2)
-        : (s.recScore >= 44 && legacyRec >= 38 && agree >= 0.2);
-
-    const recommended = consensusGate && hybridRec >= threshold && s.dataQuality !== "missing";
-
-    return {
-      ...s,
-      recScore: Math.max(0, Math.min(100, hybridRec)),
-      recommended,
-      features: {
-        ...(s.features ?? {}),
-        legacyRecScore: legacyRec,
-        modelAgreement: agree,
-        marketReliability: reliability,
-        marketPopularity: popularity,
-        recommendationMode: "hybrid-consensus-v1",
-      },
-    };
-  });
-}
-
 export async function runAnalysis(dateArg, onProgress) {
   const date = dateArg || todayIsoDate();
   const season = currentMlbSeason(new Date(date));
@@ -533,9 +441,6 @@ export async function runAnalysis(dateArg, onProgress) {
       status: g.status,
     }))
   );
-
-  const marketAccuracyRows = await db.entities.MarketAccuracy.list().catch(() => []);
-  const marketReliability = buildMarketReliability(marketAccuracyRows);
 
   const teamHitK = new Map();
   async function getTeamHitK(id) {
@@ -613,15 +518,8 @@ export async function runAnalysis(dateArg, onProgress) {
           };
 
           const modernScores = scoreHitter(lp.fullName, baseCtx);
-          const legacyScores = scoreHitterLegacy(lp.fullName, baseCtx);
-          const legacyRecommendedMarkets = new Set(legacyScores.filter((x) => x.recommended).map((x) => x.market));
-          const mergedScores = applyHybridConsensus(modernScores, toLegacyMap(legacyScores), marketReliability);
 
-          for (const s of mergedScores) {
-            const features = {
-              ...(s.features ?? {}),
-              consensus_legacy: legacyRecommendedMarkets.has(s.market),
-            };
+          for (const s of modernScores) {
             predictionRows.push({
               game_pk: g.game_pk,
               game_date: date,
@@ -637,7 +535,7 @@ export async function runAnalysis(dateArg, onProgress) {
               ceiling: Math.round(s.ceiling * 10000) / 10000,
               trigger_text: s.trigger,
               trigger_strength: Math.round(s.triggerStrength * 100) / 100,
-              features: JSON.stringify(features),
+              features: JSON.stringify(s.features ?? {}),
               data_quality: s.dataQuality,
               recommended: s.recommended,
               rec_score: Math.round(s.recScore * 100) / 100,
@@ -677,19 +575,8 @@ export async function runAnalysis(dateArg, onProgress) {
           oppTeamK: oppTeamKRate,
           expectedIP: 5.5,
         });
-        const legacyScores = scorePitcherLegacy(pname, {
-          season: st,
-          oppTeamK: oppTeamKRate,
-          expectedIP: 5.5,
-        });
-        const legacyRecommendedMarkets = new Set(legacyScores.filter((x) => x.recommended).map((x) => x.market));
-        const mergedScores = applyHybridConsensus(modernScores, toLegacyMap(legacyScores), marketReliability);
 
-        for (const s of mergedScores) {
-          const features = {
-            ...(s.features ?? {}),
-            consensus_legacy: legacyRecommendedMarkets.has(s.market),
-          };
+        for (const s of modernScores) {
           predictionRows.push({
             game_pk: g.game_pk,
             game_date: date,
@@ -705,7 +592,7 @@ export async function runAnalysis(dateArg, onProgress) {
             ceiling: Math.round(s.ceiling * 10000) / 10000,
             trigger_text: s.trigger,
             trigger_strength: Math.round(s.triggerStrength * 100) / 100,
-            features: JSON.stringify(features),
+            features: JSON.stringify(s.features ?? {}),
             data_quality: s.dataQuality,
             recommended: s.recommended,
             rec_score: Math.round(s.recScore * 100) / 100,

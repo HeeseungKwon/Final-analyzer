@@ -494,7 +494,7 @@ export function buildParlays(predictions, selectedGamePks) {
   if (selectedGamePks !== undefined && selectedGamePks !== null) {
     const pkSet = selectedGamePks instanceof Set ? selectedGamePks : new Set(selectedGamePks);
     if (pkSet.size === 0) return [];
-    const strictPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality === "ok" && p.recommended);
+    const strictPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing" && p.recommended);
     const broaderPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing");
     const fallbackPool = strictPool.length >= MIN_STRUCTURED_POOL_SIZE
       ? strictPool
