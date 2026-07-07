@@ -4,6 +4,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 // representation differences (1.5 vs 1.49/1.6) do not block a usable match.
 const LINE_MATCH_TOLERANCE = 0.11;
 const MIN_CANDIDATE_SCORE = 7;
+const MIN_VALID_AMERICAN_ODDS = 50;
 const DEFAULT_FALLBACK_ODDS = -110;
 
 const DEFAULT_IMPLIED_PROBABILITIES = {
@@ -43,12 +44,27 @@ function normalizeText(value) {
     .trim();
 }
 
+function buildEspnDateKey(gameDate) {
+  const match = String(gameDate ?? "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[1]}${match[2]}${match[3]}` : null;
+}
+
+function namesMatch(left, right) {
+  const a = normalizeText(left);
+  const b = normalizeText(right);
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
 function parseAmericanOdds(value) {
-  if (typeof value === "number" && Number.isFinite(value) && value !== 0) return Math.trunc(value);
-  const match = String(value ?? "").match(/([+-]\d{3,4})/);
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const truncated = Math.trunc(value);
+    return Math.abs(truncated) >= MIN_VALID_AMERICAN_ODDS ? truncated : null;
+  }
+  const match = String(value ?? "").match(/([+-]\d{2,4})/);
   if (!match) return null;
   const odds = Number(match[1]);
-  return Number.isFinite(odds) && odds !== 0 ? odds : null;
+  return Number.isFinite(odds) && Math.abs(odds) >= MIN_VALID_AMERICAN_ODDS ? odds : null;
 }
 
 function parseLineValue(value) {
@@ -70,7 +86,7 @@ export function convertAmericanToImplied(americanOdds) {
   return odds < 0 ? Math.abs(odds) / (Math.abs(odds) + 100) : 100 / (odds + 100);
 }
 
-function buildFallbackOdds(market) {
+function buildFallbackOdds(market, fallbackReason = "fallback-default") {
   const impliedProbability = DEFAULT_IMPLIED_PROBABILITIES[market] ?? 0.5;
   return {
     marketOdds: impliedToAmerican(impliedProbability),
@@ -79,6 +95,8 @@ function buildFallbackOdds(market) {
     source: "fallback-default",
     provider: "fallback",
     fallbackUsed: true,
+    fallbackReason,
+    eventId: null,
   };
 }
 
@@ -104,22 +122,98 @@ async function fetchCachedPayload(key, url) {
   return data;
 }
 
-async function getEspnPayload(gamePk) {
-  const urls = [
-    { key: `summary:${gamePk}`, url: `${ESPN_BASE}/summary?event=${gamePk}` },
-    { key: `scoreboard:${gamePk}`, url: `${ESPN_BASE}/scoreboard?events=${gamePk}` },
-  ];
+function extractCompetitorNames(event) {
+  const competitors = event?.competitions?.flatMap((competition) => competition?.competitors ?? [])
+    ?? event?.competitors
+    ?? [];
 
-  for (const candidate of urls) {
-    try {
-      const payload = await fetchCachedPayload(candidate.key, candidate.url);
-      if (payload) return { payload, source: candidate.key.startsWith("summary:") ? "espn-summary" : "espn-scoreboard" };
-    } catch {
-      // Fall through to the next endpoint or default odds.
+  const home = competitors.find((entry) => entry?.homeAway === "home") ?? competitors[0];
+  const away = competitors.find((entry) => entry?.homeAway === "away") ?? competitors[1];
+
+  const namesFor = (entry) => [
+    entry?.team?.displayName,
+    entry?.team?.shortDisplayName,
+    entry?.team?.name,
+    entry?.team?.abbreviation,
+    entry?.displayName,
+    entry?.shortDisplayName,
+    entry?.name,
+    entry?.abbreviation,
+  ].filter(Boolean);
+
+  return {
+    home: namesFor(home),
+    away: namesFor(away),
+  };
+}
+
+function findMatchingEvent(scoreboardPayload, gameContext) {
+  const events = scoreboardPayload?.events ?? [];
+  for (const event of events) {
+    const competitors = extractCompetitorNames(event);
+    const homeMatch = competitors.home.some((name) => namesMatch(name, gameContext.homeTeamName));
+    const awayMatch = competitors.away.some((name) => namesMatch(name, gameContext.awayTeamName));
+    if (homeMatch && awayMatch) return event;
+  }
+  return null;
+}
+
+async function resolveEspnEvent(gamePk, gameContext = {}) {
+  const directEventId = String(gamePk ?? "").trim();
+  if (directEventId) {
+    return { eventId: directEventId, source: "espn-direct-id", payload: null };
+  }
+
+  const dateKey = buildEspnDateKey(gameContext.gameDate);
+  if (!dateKey || !gameContext.homeTeamName || !gameContext.awayTeamName) return null;
+
+  try {
+    const scoreboardPayload = await fetchCachedPayload(
+      `scoreboard-date:${dateKey}`,
+      `${ESPN_BASE}/scoreboard?dates=${dateKey}`
+    );
+    const event = findMatchingEvent(scoreboardPayload, gameContext);
+    const eventId = String(event?.id ?? event?.uid ?? "").trim();
+    return eventId ? { eventId, source: "espn-scoreboard-date", payload: event ?? null } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getEspnPayload(gamePk, gameContext = {}) {
+  const attemptedEventIds = new Set();
+  const payloads = [];
+  const resolvedEvents = [
+    await resolveEspnEvent(gamePk),
+    await resolveEspnEvent(null, gameContext),
+  ].filter(Boolean);
+
+  for (const resolved of resolvedEvents) {
+    if (attemptedEventIds.has(resolved.eventId)) continue;
+    attemptedEventIds.add(resolved.eventId);
+
+    const urls = [
+      { key: `summary:${resolved.eventId}`, url: `${ESPN_BASE}/summary?event=${resolved.eventId}`, source: "espn-summary" },
+      { key: `scoreboard:${resolved.eventId}`, url: `${ESPN_BASE}/scoreboard?events=${resolved.eventId}`, source: "espn-scoreboard" },
+    ];
+
+    for (const candidate of urls) {
+      try {
+        const payload = await fetchCachedPayload(candidate.key, candidate.url);
+        if (payload) {
+          payloads.push({ payload, source: candidate.source, eventId: resolved.eventId });
+        }
+      } catch {
+        // Fall through to the next endpoint or default odds.
+      }
+    }
+
+    if (resolved.payload) {
+      payloads.push({ payload: resolved.payload, source: resolved.source, eventId: resolved.eventId });
     }
   }
 
-  return null;
+  return payloads;
 }
 
 function extractStrings(record) {
@@ -127,6 +221,7 @@ function extractStrings(record) {
     "name",
     "displayName",
     "shortName",
+    "fullName",
     "description",
     "details",
     "label",
@@ -137,10 +232,33 @@ function extractStrings(record) {
     "alternateDisplayValue",
   ];
 
-  return keys
+  const directValues = keys
     .map((key) => record?.[key])
     .filter(Boolean)
     .join(" ");
+
+  const nestedEntities = [
+    record?.player,
+    record?.athlete,
+    record?.team,
+    record?.competitor,
+    record?.participant,
+    record?.selection,
+    record?.outcome,
+  ].flatMap((entity) => Array.isArray(entity) ? entity : [entity]);
+
+  const nestedValues = nestedEntities
+    .flatMap((entity) => [
+      entity?.name,
+      entity?.displayName,
+      entity?.shortName,
+      entity?.fullName,
+      entity?.abbreviation,
+    ])
+    .filter(Boolean)
+    .join(" ");
+
+  return [directValues, nestedValues].filter(Boolean).join(" ");
 }
 
 function extractOddsCandidate(record) {
@@ -148,12 +266,15 @@ function extractOddsCandidate(record) {
 
   const text = normalizeText(extractStrings(record));
   const marketOdds = [
+    record?.overOdds,
+    record?.over?.american,
+    record?.over?.americanOdds,
+    record?.over?.odds,
     record.american,
     record.americanOdds,
     record.displayOdds,
     record.price,
     record.odds,
-    record.value,
     record.moneyLine,
     record?.awayTeamOdds?.moneyLine,
     record?.homeTeamOdds?.moneyLine,
@@ -221,54 +342,68 @@ function candidateScore(candidate, market, playerTerms) {
   return score;
 }
 
-export async function fetchRealtimeOdds(gamePk, market, playerName) {
+export async function fetchRealtimeOdds(gamePk, market, playerName, gameContext = {}) {
   const cacheKey = `${gamePk}:${market}:${normalizeText(playerName)}`;
   const cached = oddsResultCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.value;
   }
 
-  const fallback = buildFallbackOdds(market);
+  const baseFallback = buildFallbackOdds(market);
+  const fallback = (reason) => ({ ...baseFallback, fallbackReason: reason });
 
   if (!gamePk || !market || !playerName) {
-    return fallback;
+    return fallback("missing-lookup-input");
   }
 
   try {
-    const response = await getEspnPayload(gamePk);
-    if (!response?.payload) return fallback;
-
-    const candidates = collectOddsCandidates(response.payload);
-    if (candidates.length === 0) return fallback;
     const playerTerms = normalizeText(playerName).split(" ").filter(Boolean);
+    const responses = await getEspnPayload(gamePk, gameContext);
+    if (!responses.length) return fallback("espn-payload-unavailable");
 
-    const best = candidates
-      .map((candidate) => ({
-        ...candidate,
-        score: candidateScore(candidate, market, playerTerms),
-      }))
-      .filter((candidate) => candidate.score >= MIN_CANDIDATE_SCORE)
-      .sort((a, b) => b.score - a.score)[0];
+    let sawCandidates = false;
+    let sawScoredCandidate = false;
 
-    if (!best) return fallback;
+    for (const response of responses) {
+      const candidates = collectOddsCandidates(response.payload);
+      if (candidates.length === 0) continue;
+      sawCandidates = true;
 
-    const impliedProbability = convertAmericanToImplied(best.marketOdds);
-    if (!Number.isFinite(impliedProbability)) return fallback;
+      const best = candidates
+        .map((candidate) => ({
+          ...candidate,
+          score: candidateScore(candidate, market, playerTerms),
+        }))
+        .filter((candidate) => candidate.score >= MIN_CANDIDATE_SCORE)
+        .sort((a, b) => b.score - a.score)[0];
 
-    const value = {
-      marketOdds: best.marketOdds,
-      impliedProbability,
-      marketLine: best.marketLine ?? fallback.marketLine,
-      source: response.source,
-      provider: best.provider,
-      fallbackUsed: false,
-    };
-    oddsResultCache.set(cacheKey, {
-      value,
-      expiresAt: Date.now() + CACHE_TTL_MS,
-    });
-    return value;
+      if (!best) continue;
+      sawScoredCandidate = true;
+
+      const impliedProbability = convertAmericanToImplied(best.marketOdds);
+      if (!Number.isFinite(impliedProbability)) continue;
+
+      const value = {
+        marketOdds: best.marketOdds,
+        impliedProbability,
+        marketLine: best.marketLine ?? baseFallback.marketLine,
+        source: response.source,
+        provider: best.provider,
+        fallbackUsed: false,
+        fallbackReason: null,
+        eventId: response.eventId ?? null,
+      };
+      oddsResultCache.set(cacheKey, {
+        value,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      });
+      return value;
+    }
+
+    if (!sawCandidates) return fallback("espn-no-odds-candidates");
+    if (!sawScoredCandidate) return fallback("espn-no-matching-player-prop");
+    return fallback("espn-invalid-market-odds");
   } catch {
-    return fallback;
+    return fallback("espn-request-failed");
   }
 }

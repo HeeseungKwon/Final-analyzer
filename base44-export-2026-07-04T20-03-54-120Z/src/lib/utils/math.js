@@ -100,12 +100,12 @@ export function blend(season, recent, wRecent = 0.35) {
 
 /**
  * Converts a probability to a confidence score (0-100)
- * Linear scaling centered at an anchor point, with customizable slope
+ * Logistic scaling centered at an anchor point, with customizable slope
  * 
- * Formula: 50 + slope * (prob - anchor), clamped to [0, 100]
+ * Formula: 100 / (1 + e^(-(prob - anchor) * slope / 18))
  * - At anchor point: confidence = 50
- * - Above anchor: confidence increases with slope
- * - Below anchor: confidence decreases
+ * - Above anchor: confidence rises smoothly without saturating too early
+ * - Below anchor: confidence falls smoothly without collapsing to 0 too early
  * 
  * Used to display model confidence in a human-friendly 0-100 range
  * Different markets use different anchor/slope pairs for calibration
@@ -125,6 +125,8 @@ export function blend(season, recent, wRecent = 0.35) {
  * toConfidence(0.75, 0.65, 130) // ~77
  */
 export function toConfidence(prob, anchor = 0.5, slope = 120) {
-  const c = 50 + slope * (prob - anchor);
-  return Math.max(0, Math.min(100, c));
+  const midpoint = clamp(Number(anchor) || 0.5, 0, 1);
+  const probability = clamp(Number(prob) || 0, 0, 1);
+  const steepness = Math.max(1, Number(slope) || 120) / 18;
+  return clamp(100 / (1 + Math.exp(-(probability - midpoint) * steepness)), 0, 100);
 }
