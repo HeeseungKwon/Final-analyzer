@@ -102,7 +102,7 @@ export function blend(season, recent, wRecent = 0.35) {
  * Converts a probability to a confidence score (0-100)
  * Logistic scaling centered at an anchor point, with customizable slope
  * 
- * Formula: 100 / (1 + e^(-(prob - anchor) * slope / 18))
+ * Formula: 100 / (1 + e^(-(prob - anchor) * (slope / 18)))
  * - At anchor point: confidence = 50
  * - Above anchor: confidence rises smoothly without saturating too early
  * - Below anchor: confidence falls smoothly without collapsing to 0 too early
