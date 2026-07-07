@@ -12,7 +12,7 @@
  * Reuses existing analyzer outputs; no duplicate calculations.
  */
 
-import { clamp } from "@/lib/utils/math";
+import { clamp, toConfidence } from "@/lib/utils/math";
 
 // Confidence score component weights (must sum to 1.0)
 const CONFIDENCE_WEIGHTS = {
@@ -90,6 +90,18 @@ const MARKET_WEIGHTS = {
   },
 };
 
+const MARKET_PROBABILITY_CALIBRATION = {
+  "1+ HR": { anchor: 0.10, slope: 300 },
+  "home_run": { anchor: 0.10, slope: 300 },
+  "2+ Hits": { anchor: 0.34, slope: 170 },
+  "2+ Total Bases": { anchor: 0.33, slope: 175 },
+  "3+ Total Bases": { anchor: 0.20, slope: 200 },
+  "2+ HRR": { anchor: 0.30, slope: 180 },
+  "hrr_2": { anchor: 0.30, slope: 180 },
+  "3+ HRR": { anchor: 0.17, slope: 220 },
+  "hrr_3": { anchor: 0.17, slope: 220 },
+};
+
 /**
  * Sample size credibility using logistic curve
  * Returns 0-1 where 1 = maximum credibility
@@ -157,6 +169,13 @@ export function calculateConfidenceScore(ctx, dataQuality, oppPitcherStats) {
   };
   const multiplier = qualityMultipliers[dataQuality] ?? 1.0;
   score *= multiplier;
+
+  const qualityFloor = {
+    missing: 35,
+    partial: 48,
+    ok: 58,
+  };
+  score = Math.max(score, qualityFloor[dataQuality] ?? 45);
 
   return clamp(score, 0, 100);
 }
@@ -298,7 +317,12 @@ export function calculateMarketProjectionScore(
   const weights = MARKET_WEIGHTS[market] || MARKET_WEIGHTS["2+ Hits"];
 
   // Get base metrics
-  const modelProbScore = clamp(Number(prediction.projection ?? 0.5) * 100, 0, 100);
+  const marketCalibration = MARKET_PROBABILITY_CALIBRATION[market] ?? { anchor: 0.30, slope: 180 };
+  const modelProbScore = toConfidence(
+    Number(prediction.projection ?? 0),
+    marketCalibration.anchor,
+    marketCalibration.slope
+  );
   const projectedStats = extractProjectedStats(simulationData);
 
   // Normalize expected value to slate
