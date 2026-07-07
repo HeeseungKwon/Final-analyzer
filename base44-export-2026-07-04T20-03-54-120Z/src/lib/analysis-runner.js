@@ -14,7 +14,7 @@ import {
 } from "@/lib/mlb-api";
 import { scoreHitter, scorePitcher, parkFactorFor } from "@/lib/scoring";
 import { scoreHitterLegacy, scorePitcherLegacy } from "@/lib/scoring-legacy";
-import { isProbabilityMarket } from "@/lib/constants/markets";
+import { getRecommendationMarketPriority, isProbabilityMarket } from "@/lib/constants/markets";
 
 const MARKET_LIMITS = {
   hit_2: 10,
@@ -42,6 +42,24 @@ const MARKET_TRUST_BONUS = {
   home_run: 3,
   hit_2: 2,
 };
+
+const MARKET_RECOMMENDATION_FOCUS_BONUS = {
+  // Tuned as a soft portfolio nudge rather than a hard gate: core hitter props
+  // get a modest lift, while HR props take a modest penalty because they now
+  // live in a separate section and should not crowd out the higher-probability
+  // HRR / hits / TB recommendations.
+  hrr_2: 8,
+  hrr_3: 6,
+  hit_2: 4,
+  total_bases: 2,
+  // Home runs stay supported, but the main hitter recommendation flow now
+  // prioritizes higher-probability HRR/hits/TB props and surfaces HR picks
+  // separately instead of letting them dominate the portfolio.
+  home_run: -8,
+};
+// Small enough to preserve the underlying rec_score ordering, but large enough
+// to break close calls in favor of the configured market priority order.
+const PRIORITY_PENALTY_FACTOR = 0.75;
 
 const PORTFOLIO_STYLE_WEIGHTS = {
   aggressive: 0.4,
@@ -88,6 +106,7 @@ function rankForPortfolio(row) {
   const features = parseFeatures(row.features);
   const consensusBonus = features.consensus_legacy ? 12 : 0;
   const marketBonus = MARKET_TRUST_BONUS[row.market] ?? 0;
+  const focusBonus = MARKET_RECOMMENDATION_FOCUS_BONUS[row.market] ?? 0;
   const modelEdge = Number(features.modelEdge ?? 0);
   const impliedProb = Number(features.impliedMarketProb ?? 0.5);
 
@@ -107,7 +126,9 @@ function rankForPortfolio(row) {
     else if (row.verdict === "middling") verdictBonus = 5;
   }
 
-  return (row.rec_score ?? 0) + consensusBonus + marketBonus + pOverBonus + edgeBonus + certaintyBonus + marketAlignment + verdictBonus - variancePenalty;
+  const priorityPenalty = getRecommendationMarketPriority(row.market) * PRIORITY_PENALTY_FACTOR;
+
+  return (row.rec_score ?? 0) + consensusBonus + marketBonus + focusBonus + pOverBonus + edgeBonus + certaintyBonus + marketAlignment + verdictBonus - variancePenalty - priorityPenalty;
 }
 
 function styleForPortfolio(row) {

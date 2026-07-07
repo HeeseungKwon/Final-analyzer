@@ -9,17 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { buildParlays, buildHRParlays, buildCustomParlay as buildCustomParlayFn } from "@/lib/parlays";
+import { buildParlays, buildCustomParlay as buildCustomParlayFn } from "@/lib/parlays";
 import { recalculateParlayStatus } from "@/lib/utils/parlaySync";
-import { getMarketLabel } from "@/lib/constants/markets";
+import { getMarketLabel, getRecommendationMarketPriority, isCoreHitterMarket } from "@/lib/constants/markets";
 import { computePickGrade, gradeColorClass } from "@/lib/utils/pickGrade";
 
 const DAILY_PARLAYS_KEY = "dailyParlays_v1";
-const ANALYZER_PARLAY_SCORE_WEIGHTS = {
-  ev: 100,
-  confidence: 0.5,
-  correlationPenalty: 22,
-};
 
 let _idSeq = 0;
 function genId(prefix) {
@@ -30,6 +25,21 @@ function genId(prefix) {
 function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function comparePicksByPriority(a, b) {
+  return (
+    getRecommendationMarketPriority(a.market) - getRecommendationMarketPriority(b.market) ||
+    (b.rec_score ?? 0) - (a.rec_score ?? 0) ||
+    (b.confidence ?? 0) - (a.confidence ?? 0) ||
+    String(a.player_name ?? "").localeCompare(String(b.player_name ?? ""))
+  );
+}
+
+function formatProjectionForMarket(projection, market) {
+  return market === "home_run" || market === "hit_2"
+    ? `${(projection * 100).toFixed(1)}%`
+    : Number(projection).toFixed(2);
 }
 
 function ParlayCard({ parlay, selectable, selected, onToggle, onDelete }) {
@@ -157,44 +167,96 @@ export default function Parlays() {
   const games = data?.games ?? [];
   const eligiblePredictions = data?.eligiblePredictions ?? [];
 
-  // All recommended picks from selected games, sorted by rec_score
+  // All recommended picks from selected games, sorted with core hitter markets first.
   const allPicksForGames = useMemo(
     () =>
       eligiblePredictions
         .filter((p) => selectedGamePks.has(p.game_pk) && p.recommended)
-        .sort((a, b) => (b.rec_score ?? 0) - (a.rec_score ?? 0)),
+        .sort(comparePicksByPriority),
     [eligiblePredictions, selectedGamePks]
+  );
+
+  const corePicksForGames = useMemo(
+    () => allPicksForGames.filter((p) => isCoreHitterMarket(p.market)),
+    [allPicksForGames]
+  );
+
+  const homeRunPicksForGames = useMemo(
+    () => allPicksForGames.filter((p) => p.market === "home_run"),
+    [allPicksForGames]
+  );
+
+  const otherPicksForGames = useMemo(
+    () => allPicksForGames.filter((p) => !isCoreHitterMarket(p.market) && p.market !== "home_run"),
+    [allPicksForGames]
   );
 
   // Analyzer-generated parlays for selected games
   const analyzerParlays = useMemo(
-    () => {
-      const all = [
-        ...buildParlays(eligiblePredictions, selectedGamePks),
-        ...buildHRParlays(eligiblePredictions, selectedGamePks),
-      ];
-      const deduped = new Map();
-      for (const parlay of all) {
-        const signature = [...(parlay.legs ?? [])]
-          .map((leg) => `${leg.playerId}:${leg.market}`)
-          .sort()
-          .join("|");
-        const score =
-          Number(parlay.rankingScore ?? 0) +
-          Number(parlay.ev ?? 0) * ANALYZER_PARLAY_SCORE_WEIGHTS.ev +
-          Number(parlay.avgConfidence ?? 0) * ANALYZER_PARLAY_SCORE_WEIGHTS.confidence -
-          Number(parlay.correlation ?? 0) * ANALYZER_PARLAY_SCORE_WEIGHTS.correlationPenalty;
-        const current = deduped.get(signature);
-        if (!current || score > current.score) {
-          deduped.set(signature, { parlay, score });
-        }
-      }
-      return [...deduped.values()]
-        .sort((a, b) => b.score - a.score)
-        .map((entry) => entry.parlay);
-    },
+    () => buildParlays(eligiblePredictions, selectedGamePks),
     [eligiblePredictions, selectedGamePks]
   );
+
+  function renderRecommendedPicksTable(picks) {
+    return (
+      <Card>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-8"></TableHead>
+                  <TableHead>Player</TableHead>
+                  <TableHead>Team</TableHead>
+                  <TableHead>Market</TableHead>
+                  <TableHead className="text-right">Conf</TableHead>
+                  <TableHead className="text-right">Proj</TableHead>
+                  <TableHead className="text-right">Grade</TableHead>
+                  <TableHead className="text-right">Rec Score</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {picks.map((p) => {
+                  const picked = customSelectedPickIds.has(p.id);
+                  const { letterGrade } = computePickGrade(p);
+                  return (
+                    <TableRow
+                      key={p.id}
+                      className={`cursor-pointer hover:bg-muted/40 ${picked ? "bg-primary/5" : ""}`}
+                      onClick={() => handlePickSelection(p.id)}
+                    >
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-primary"
+                          checked={picked}
+                          onChange={() => handlePickSelection(p.id)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </TableCell>
+                      <TableCell className="font-medium">{p.player_name}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{p.team_name}</TableCell>
+                      <TableCell>{getMarketLabel(p.market, "short")}</TableCell>
+                      <TableCell className="text-right tabular-nums">{Number(p.confidence).toFixed(0)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatProjectionForMarket(p.projection, p.market)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className={"inline-block rounded px-1.5 py-0.5 text-xs font-bold " + gradeColorClass(letterGrade)}>
+                          {letterGrade}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{Number(p.rec_score).toFixed(1)}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
@@ -380,8 +442,11 @@ export default function Parlays() {
                 <div>
                   <div className="text-xs uppercase tracking-widest text-muted-foreground">Recommended picks</div>
                   <h3 className="text-lg font-bold tracking-tight">
-                    {allPicksForGames.length} picks from {selectedGamePks.size} selected game{selectedGamePks.size > 1 ? "s" : ""}
+                    {corePicksForGames.length} core hitter picks from {selectedGamePks.size} selected game{selectedGamePks.size > 1 ? "s" : ""}
                   </h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Main recommendations prioritize 2+ HRR, 3+ HRR, 2+ Hits, and TB O1.5. Home run picks are broken out separately below.
+                  </p>
                 </div>
                 {customSelectedPickIds.size > 0 && (
                   <div className="text-xs text-muted-foreground">
@@ -391,64 +456,49 @@ export default function Parlays() {
               </div>
 
               {allPicksForGames.length > 0 ? (
-                <Card>
-                  <CardContent className="p-0">
-                    <div className="overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="w-8"></TableHead>
-                            <TableHead>Player</TableHead>
-                            <TableHead>Team</TableHead>
-                            <TableHead>Market</TableHead>
-                            <TableHead className="text-right">Conf</TableHead>
-                            <TableHead className="text-right">Proj</TableHead>
-                            <TableHead className="text-right">Grade</TableHead>
-                            <TableHead className="text-right">Rec Score</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {allPicksForGames.map((p) => {
-                            const picked = customSelectedPickIds.has(p.id);
-                            const { letterGrade } = computePickGrade(p);
-                            return (
-                              <TableRow
-                                key={p.id}
-                                className={`cursor-pointer hover:bg-muted/40 ${picked ? "bg-primary/5" : ""}`}
-                                onClick={() => handlePickSelection(p.id)}
-                              >
-                                <TableCell>
-                                  <input
-                                    type="checkbox"
-                                    className="h-4 w-4 accent-primary"
-                                    checked={picked}
-                                    onChange={() => handlePickSelection(p.id)}
-                                    onClick={(e) => e.stopPropagation()}
-                                  />
-                                </TableCell>
-                                <TableCell className="font-medium">{p.player_name}</TableCell>
-                                <TableCell className="text-xs text-muted-foreground">{p.team_name}</TableCell>
-                                <TableCell>{getMarketLabel(p.market, "short")}</TableCell>
-                                <TableCell className="text-right tabular-nums">{Number(p.confidence).toFixed(0)}</TableCell>
-                                <TableCell className="text-right tabular-nums">
-                                  {p.market === "home_run" || p.market === "hit_2"
-                                    ? `${(p.projection * 100).toFixed(1)}%`
-                                    : Number(p.projection).toFixed(2)}
-                                </TableCell>
-                                <TableCell className="text-right">
-                                  <span className={"inline-block rounded px-1.5 py-0.5 text-xs font-bold " + gradeColorClass(letterGrade)}>
-                                    {letterGrade}
-                                  </span>
-                                </TableCell>
-                                <TableCell className="text-right tabular-nums">{Number(p.rec_score).toFixed(1)}</TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
+                <div className="space-y-6">
+                  {corePicksForGames.length > 0 ? (
+                    <div className="space-y-2">
+                      <div>
+                        <div className="text-xs uppercase tracking-widest text-muted-foreground">Core hitter recommendations</div>
+                        <h4 className="text-base font-bold tracking-tight">Best HRR, hits, and total bases props</h4>
+                      </div>
+                      {renderRecommendedPicksTable(corePicksForGames)}
                     </div>
-                  </CardContent>
-                </Card>
+                  ) : (
+                    <Card>
+                      <CardContent className="py-6 text-center text-sm text-muted-foreground">
+                        No core hitter recommendations were available for the selected game{selectedGamePks.size > 1 ? "s" : ""}.
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  <div className="space-y-2">
+                    <div>
+                      <div className="text-xs uppercase tracking-widest text-muted-foreground">Best home run picks</div>
+                      <h4 className="text-base font-bold tracking-tight">Dedicated HR opportunities</h4>
+                    </div>
+                    {homeRunPicksForGames.length > 0 ? (
+                      renderRecommendedPicksTable(homeRunPicksForGames)
+                    ) : (
+                      <Card>
+                        <CardContent className="py-6 text-center text-sm text-muted-foreground">
+                          No recommended home run picks were available for the selected game{selectedGamePks.size > 1 ? "s" : ""}.
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
+
+                  {otherPicksForGames.length > 0 && (
+                    <div className="space-y-2">
+                      <div>
+                        <div className="text-xs uppercase tracking-widest text-muted-foreground">Other recommended props</div>
+                        <h4 className="text-base font-bold tracking-tight">Non-core markets still flagged by the model</h4>
+                      </div>
+                      {renderRecommendedPicksTable(otherPicksForGames)}
+                    </div>
+                  )}
+                </div>
               ) : (
                 <Card>
                   <CardContent className="py-6 text-center text-sm text-muted-foreground">
@@ -470,7 +520,7 @@ export default function Parlays() {
               <div className="text-xs uppercase tracking-widest text-muted-foreground">Step 2A</div>
               <h2 className="text-2xl font-black tracking-tight">Analyzer-Generated Parlays</h2>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Parlays built automatically from the {selectedGamePks.size} selected game{selectedGamePks.size > 1 ? "s" : ""}. Check the ones you want to save.
+                Parlays built automatically from the {selectedGamePks.size} selected game{selectedGamePks.size > 1 ? "s" : ""}: one mixed 4-leg card with exactly one HR leg, one all-core 4-leg card, and one all-core 5-leg card.
               </p>
             </div>
 
@@ -489,7 +539,7 @@ export default function Parlays() {
             ) : (
               <Card>
                 <CardContent className="py-6 text-center text-sm text-muted-foreground">
-                  Not enough picks across the selected games to build full parlays. Try selecting more games or run analysis on the Today page.
+                  Not enough recommended core hitter props were available across the selected games to build the required 4-leg and 5-leg cards.
                 </CardContent>
               </Card>
             )}

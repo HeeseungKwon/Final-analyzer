@@ -19,6 +19,26 @@ export const MARKET_KEYS = {
   STRIKEOUTS: 'strikeouts',
 };
 
+export const CORE_HITTER_MARKETS = [
+  MARKET_KEYS.HRR_2,
+  MARKET_KEYS.HRR_3,
+  MARKET_KEYS.HIT_2,
+  MARKET_KEYS.TOTAL_BASES,
+];
+
+// Reused by recommendation sorting and parlay building, so keep the normalized
+// lookup set module-scoped instead of recreating it at every call site.
+const CORE_HITTER_MARKET_SET = new Set(CORE_HITTER_MARKETS);
+
+export const RECOMMENDATION_MARKET_PRIORITY = {
+  [MARKET_KEYS.HRR_2]: 0,
+  [MARKET_KEYS.HRR_3]: 1,
+  [MARKET_KEYS.HIT_2]: 2,
+  [MARKET_KEYS.TOTAL_BASES]: 3,
+  [MARKET_KEYS.HOME_RUN]: 4,
+  [MARKET_KEYS.STRIKEOUTS]: 5,
+};
+
 /**
  * Human-readable market labels
  * Maps market keys to display-friendly names for UI rendering
@@ -117,6 +137,23 @@ const LEGACY_MARKET_ALIASES = {
 
 export function normalizeMarketKey(marketKey) {
   return LEGACY_MARKET_ALIASES[marketKey] ?? marketKey;
+}
+
+/**
+ * Returns true when the market belongs to the core hitter recommendation set:
+ * 2+ HRR, 3+ HRR, 2+ Hits, or TB O1.5.
+ */
+export function isCoreHitterMarket(marketKey) {
+  return CORE_HITTER_MARKET_SET.has(normalizeMarketKey(marketKey));
+}
+
+/**
+ * Lower numbers represent higher recommendation priority. Unknown markets sort
+ * to the end so new or unsupported market keys cannot displace the core order.
+ */
+export function getRecommendationMarketPriority(marketKey) {
+  const key = normalizeMarketKey(marketKey);
+  return RECOMMENDATION_MARKET_PRIORITY[key] ?? Number.MAX_SAFE_INTEGER;
 }
 
 /**

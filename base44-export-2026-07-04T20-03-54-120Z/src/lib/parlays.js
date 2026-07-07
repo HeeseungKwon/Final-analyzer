@@ -13,6 +13,7 @@
  */
 
 import { clamp, smooth, probToAmerican } from "@/lib/utils/math";
+import { getRecommendationMarketPriority, isCoreHitterMarket } from "@/lib/constants/markets";
 
 const PDT_TZ = "America/Los_Angeles";
 
@@ -37,8 +38,12 @@ const MIN_PARLAY_EV = -0.18;
 // Parlays sharing >=67% of legs are considered redundant portfolio exposure.
 const MAX_PARLAY_OVERLAP = 0.67;
 const MAX_RANKED_POOL_SIZE = 18;
-const MAX_PICKS_PER_FAMILY = 2;
 const MIN_PICK_EDGE = -0.04;
+const MIN_STRUCTURED_POOL_SIZE = 4;
+const MIN_HOME_RUN_POOL_SIZE = 6;
+// Keep enough HR candidates in the mixed-card search without letting the
+// lower-probability HR market overwhelm the core hitter pool.
+const HOME_RUN_POOL_SIZE = Math.max(MIN_HOME_RUN_POOL_SIZE, Math.ceil(MAX_RANKED_POOL_SIZE / 2));
 
 const CORRELATION_COMPONENTS = {
   base: 0.03,
@@ -297,6 +302,94 @@ function dedupeAndRankParlays(candidates, limit = 8) {
   return out;
 }
 
+function sortStructuredPicksByRank(a, b) {
+  return (
+    getRecommendationMarketPriority(a.market) - getRecommendationMarketPriority(b.market) ||
+    b._edge - a._edge ||
+    b._legProb - a._legProb ||
+    (b.rec_score ?? 0) - (a.rec_score ?? 0) ||
+    (b.confidence ?? 0) - (a.confidence ?? 0)
+  );
+}
+
+function getCandidatePlayerOverlapCount(candidate, selectedPlayers) {
+  if (!selectedPlayers.size) return 0;
+  return candidate.legs.reduce((count, leg) => count + (selectedPlayers.has(leg.playerId) ? 1 : 0), 0);
+}
+
+function pickBestStructuredCandidate(candidates, selectedParlays) {
+  if (candidates.length === 0) return null;
+  const selectedPlayers = new Set(
+    selectedParlays.flatMap((parlay) => (parlay.legs ?? []).map((leg) => leg.playerId))
+  );
+  return candidates.sort((a, b) => {
+    const overlapDiff = getCandidatePlayerOverlapCount(a, selectedPlayers) - getCandidatePlayerOverlapCount(b, selectedPlayers);
+    if (overlapDiff !== 0) return overlapDiff;
+    return b.rankingScore - a.rankingScore;
+  })[0] ?? null;
+}
+
+/**
+ * Enumerates structured selected-game parlays that must satisfy an exact
+ * home-run-leg count while still optimizing for EV, confidence, and low
+ * correlation across unique players.
+ */
+function buildStructuredParlayCandidates({
+  pool,
+  size,
+  name,
+  strategy,
+  selectedGameCount,
+  exactHomeRunLegs = 0,
+}) {
+  if (pool.length < size) return [];
+
+  const candidates = [];
+  const maxPerGame = adaptiveMaxPerGame(selectedGameCount, size);
+
+  const search = (start, chosen, byGame, byPlayer, homeRunLegs) => {
+    // Stop once enough viable cards have been found; this bounded search keeps
+    // client-side combinatorics responsive while still producing a large
+    // candidate set for EV/correlation ranking on typical slates.
+    if (candidates.length >= MAX_CANDIDATE_PARLAYS) return;
+
+    const remaining = size - chosen.length;
+    const remainingHomeRunsNeeded = exactHomeRunLegs - homeRunLegs;
+    // Prune branches that can no longer satisfy the exact HR-leg requirement.
+    if (remainingHomeRunsNeeded > remaining) return;
+    if (homeRunLegs > exactHomeRunLegs) return;
+
+    if (chosen.length === size) {
+      if (homeRunLegs !== exactHomeRunLegs) return;
+      const legs = chosen.map((pick) => toLeg(pick, `portfolio-optimized ${size}-leg build`));
+      const parlay = assembleParlay(name, strategy, legs, size);
+      if (!parlay) return;
+      const enriched = enrichParlayRanking(parlay, chosen);
+      candidates.push(enriched);
+      return;
+    }
+
+    for (let i = start; i < pool.length; i++) {
+      const pick = pool[i];
+      const isHr = pick.market === "home_run";
+      if ((byGame.get(pick.game_pk) ?? 0) >= maxPerGame) continue;
+      if ((byPlayer.get(pick.player_id) ?? 0) >= 1) continue;
+      if (pick._edge < MIN_PICK_EDGE) continue;
+
+      chosen.push(pick);
+      byGame.set(pick.game_pk, (byGame.get(pick.game_pk) ?? 0) + 1);
+      byPlayer.set(pick.player_id, (byPlayer.get(pick.player_id) ?? 0) + 1);
+      search(i + 1, chosen, byGame, byPlayer, homeRunLegs + (isHr ? 1 : 0));
+      chosen.pop();
+      byGame.set(pick.game_pk, (byGame.get(pick.game_pk) ?? 1) - 1);
+      byPlayer.set(pick.player_id, (byPlayer.get(pick.player_id) ?? 1) - 1);
+    }
+  };
+
+  search(0, [], new Map(), new Map(), 0);
+  return dedupeAndRankParlays(candidates, MAX_CANDIDATE_PARLAYS);
+}
+
 function adaptiveMaxPerGame(selectedGameCount, legSize) {
   return Math.max(1, Math.ceil(legSize / Math.max(1, Math.min(selectedGameCount, legSize))));
 }
@@ -402,12 +495,13 @@ export function buildParlays(predictions, selectedGamePks) {
     const pkSet = selectedGamePks instanceof Set ? selectedGamePks : new Set(selectedGamePks);
     if (pkSet.size === 0) return [];
     const strictPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality === "ok" && p.recommended);
-    const fallbackPool = strictPool.length >= 2
+    const broaderPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing");
+    const fallbackPool = strictPool.length >= MIN_STRUCTURED_POOL_SIZE
       ? strictPool
-      : predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing");
-    if (fallbackPool.length < 2) return [];
+      : broaderPool;
+    if (fallbackPool.length < MIN_STRUCTURED_POOL_SIZE) return [];
 
-    const ranked = [...fallbackPool]
+    const scoredPool = [...fallbackPool]
       .map((p) => {
         const legProb = legProbabilityFor(p);
         const impliedProb = impliedProbForPrediction(p);
@@ -420,65 +514,56 @@ export function buildParlays(predictions, selectedGamePks) {
           _tier: tierForPrediction(p),
         };
       })
-      .sort((a, b) =>
-        b._edge - a._edge ||
-        b._legProb - a._legProb ||
-        (b.rec_score ?? 0) - (a.rec_score ?? 0) ||
-        (b.confidence ?? 0) - (a.confidence ?? 0)
-      )
+      .sort(sortStructuredPicksByRank);
+
+    const corePool = scoredPool
+      .filter((p) => isCoreHitterMarket(p.market))
       .slice(0, MAX_RANKED_POOL_SIZE);
+    const homeRunPool = scoredPool
+      .filter((p) => p.market === "home_run")
+      .slice(0, HOME_RUN_POOL_SIZE);
+    if (corePool.length < MIN_STRUCTURED_POOL_SIZE) return [];
 
-    const candidates = [];
-    const legSizes = [2, 3, 4, 5].filter((size) => size <= ranked.length);
+    const structuredParlays = [];
 
-    const buildCombos = (size, start = 0, chosen = [], byGame = new Map(), byPlayer = new Map(), familyCount = new Map()) => {
-      // Cap candidates at MAX_CANDIDATE_PARLAYS to keep combo search responsive in-browser.
-      if (candidates.length >= MAX_CANDIDATE_PARLAYS) return;
-      if (chosen.length === size) {
-        const legs = chosen.map((pick) => toLeg(pick, `auto-ranked ${size}-leg combination`));
-        const parlay = assembleParlay(`${size}-Leg Candidate`, `${size}-leg portfolio optimized for EV/confidence/correlation.`, legs, size);
-        if (!parlay) return;
-        const enriched = enrichParlayRanking(parlay, chosen);
-        // Drop cards below MIN_PARLAY_EV; keep mild negatives so low-volume slates still produce options.
-        if (enriched.ev < MIN_PARLAY_EV) return;
-        candidates.push(enriched);
-        return;
-      }
+    const mixedCandidates = buildStructuredParlayCandidates({
+      pool: [...homeRunPool, ...corePool]
+        .sort(sortStructuredPicksByRank)
+        .slice(0, MAX_RANKED_POOL_SIZE),
+      size: 4,
+      name: "Best 4-Leg Card (1 HR)",
+      strategy: "Exactly one home run leg plus three core hitter props, optimized for EV with diversified player exposure.",
+      selectedGameCount: pkSet.size,
+      exactHomeRunLegs: 1,
+    });
+    const bestMixed = pickBestStructuredCandidate(mixedCandidates, structuredParlays);
+    if (bestMixed) structuredParlays.push(bestMixed);
 
-      for (let i = start; i < ranked.length; i++) {
-        const pick = ranked[i];
-        const maxPerGame = adaptiveMaxPerGame(pkSet.size, size);
-        if ((byGame.get(pick.game_pk) ?? 0) >= maxPerGame) continue;
-        if ((byPlayer.get(pick.player_id) ?? 0) >= 1) continue;
-        const family = marketFamily(pick.market);
-        if ((familyCount.get(family) ?? 0) >= MAX_PICKS_PER_FAMILY) continue;
-        if (pick._edge < MIN_PICK_EDGE) continue;
+    const nonHr4Candidates = buildStructuredParlayCandidates({
+      pool: corePool,
+      size: 4,
+      name: "Best 4-Leg Core Card",
+      strategy: "Four high-probability hitter props from HRR, hits, and total bases markets only.",
+      selectedGameCount: pkSet.size,
+      exactHomeRunLegs: 0,
+    });
+    const bestNonHr4 = pickBestStructuredCandidate(nonHr4Candidates, structuredParlays);
+    if (bestNonHr4) structuredParlays.push(bestNonHr4);
 
-        byGame.set(pick.game_pk, (byGame.get(pick.game_pk) ?? 0) + 1);
-        byPlayer.set(pick.player_id, (byPlayer.get(pick.player_id) ?? 0) + 1);
-        familyCount.set(family, (familyCount.get(family) ?? 0) + 1);
-        chosen.push(pick);
-        buildCombos(size, i + 1, chosen, byGame, byPlayer, familyCount);
-        chosen.pop();
-        byGame.set(pick.game_pk, (byGame.get(pick.game_pk) ?? 1) - 1);
-        byPlayer.set(pick.player_id, (byPlayer.get(pick.player_id) ?? 1) - 1);
-        familyCount.set(family, (familyCount.get(family) ?? 1) - 1);
-      }
-    };
+    if (corePool.length >= 5) {
+      const nonHr5Candidates = buildStructuredParlayCandidates({
+        pool: corePool,
+        size: 5,
+        name: "Best 5-Leg Core Card",
+        strategy: "Five-leg all-core hitter parlay built from the strongest non-HR props on the slate.",
+        selectedGameCount: pkSet.size,
+        exactHomeRunLegs: 0,
+      });
+      const bestNonHr5 = pickBestStructuredCandidate(nonHr5Candidates, structuredParlays);
+      if (bestNonHr5) structuredParlays.push(bestNonHr5);
+    }
 
-    legSizes.forEach((size) => buildCombos(size));
-
-    const rankedParlays = dedupeAndRankParlays(candidates, 9).map((parlay, idx) => ({
-      ...parlay,
-      name: `Best ${parlay.legs.length}-Leg #${idx + 1}`,
-      strategy: `Ranked by EV (${(parlay.ev * 100).toFixed(1)}%), confidence (${(parlay.avgConfidence ?? 0).toFixed(1)}), and low correlation (${(parlay.correlation * 100).toFixed(1)}%).`,
-    }));
-
-    if (rankedParlays.length > 0) return rankedParlays;
-
-    const fallbackLegs = ranked.slice(0, 2).map((p) => toLeg(p, "best available fallback legs"));
-    const fallback = assembleParlay("Best Available 2-Leg", "Fallback 2-leg parlay when larger combinations are unavailable.", fallbackLegs, 2);
-    return fallback ? [enrichParlayRanking(fallback, ranked.slice(0, 2))] : [];
+    return structuredParlays;
   }
 
   // ── Legacy time-window mode (Review page backward compat) ──────────────
