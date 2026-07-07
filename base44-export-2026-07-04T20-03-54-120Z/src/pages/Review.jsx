@@ -318,31 +318,6 @@ export default function Review() {
 
       {isLoading && <div className="py-10 text-center text-muted-foreground">Loading…</div>}
       {!isLoading && (
-        <div className="mb-6 flex flex-wrap items-center gap-2">
-          <div className="text-xs uppercase tracking-widest text-muted-foreground">Filter by market:</div>
-          {["HR", "HRR", "Hit", "TB", "K"].map((cat) => (
-            <button
-              key={cat}
-              onClick={() => {
-                setSelectedMarketCategories((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(cat)) next.delete(cat);
-                  else next.add(cat);
-                  return next;
-                });
-              }}
-              className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
-                selectedMarketCategories.has(cat)
-                  ? "bg-primary text-primary-foreground"
-                  : "border border-input bg-background hover:bg-accent"
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
-      )}
-      {!isLoading && (
         <div className="grid gap-6 md:grid-cols-2">
           <Card>
             <CardHeader><CardTitle>Overall hit rate by market</CardTitle></CardHeader>
@@ -361,7 +336,6 @@ export default function Review() {
                   </TableHeader>
                   <TableBody>
                     {data.marketSummary
-                      .filter((m) => selectedMarketCategories.has(getMarketCategory(m.market)))
                       .map((m) => (
                       <TableRow key={m.market}>
                         <TableCell>{getMarketLabel(m.market, "full")}</TableCell>
@@ -397,7 +371,6 @@ export default function Review() {
                       </div>
                       <div className="space-y-2">
                         {rows
-                          .filter((b) => selectedMarketCategories.has(getMarketCategory(b.market)))
                           .map((b) => (
                           <div key={`${b.market}-${b.confidence_bucket}`} className="flex items-center gap-3">
                             <div className="w-16 shrink-0 text-xs tabular-nums text-muted-foreground">
@@ -539,7 +512,30 @@ export default function Review() {
         <Card className="mt-6">
           <CardHeader><CardTitle>Graded picks</CardTitle></CardHeader>
           <CardContent>
-            <PicksReviewTable picks={data?.gradedPicks} />
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <div className="text-xs uppercase tracking-widest text-muted-foreground">Filter by market:</div>
+              {["HR", "HRR", "Hit", "TB", "K"].map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => {
+                    setSelectedMarketCategories((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(cat)) next.delete(cat);
+                      else next.add(cat);
+                      return next;
+                    });
+                  }}
+                  className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
+                    selectedMarketCategories.has(cat)
+                      ? "bg-primary text-primary-foreground"
+                      : "border border-input bg-background hover:bg-accent"
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+            <PicksReviewTable picks={data?.gradedPicks?.filter((p) => selectedMarketCategories.has(getMarketCategory(p.market)))} />
           </CardContent>
         </Card>
       )}
