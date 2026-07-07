@@ -114,6 +114,7 @@ const MARKET_PROBABILITY_CALIBRATION = {
 const DEFAULT_MARKET_PROBABILITY_CALIBRATION = { anchor: 0.30, slope: 180 };
 
 const CONFIDENCE_QUALITY_FLOOR = {
+  // Keys mirror Prediction.data_quality enum values
   missing: 35,
   partial: 48,
   ok: 58,
@@ -187,7 +188,11 @@ export function calculateConfidenceScore(ctx, dataQuality, oppPitcherStats) {
   const multiplier = qualityMultipliers[dataQuality] ?? 1.0;
   score *= multiplier;
 
-  score = Math.max(score, CONFIDENCE_QUALITY_FLOOR[dataQuality] ?? CONFIDENCE_QUALITY_FLOOR.missing);
+  const qualityFloor = CONFIDENCE_QUALITY_FLOOR[dataQuality];
+  if (qualityFloor == null && dataQuality != null) {
+    console.warn(`Unknown data quality in confidence scoring: ${dataQuality}`);
+  }
+  score = Math.max(score, qualityFloor ?? CONFIDENCE_QUALITY_FLOOR.missing);
 
   return clamp(score, 0, 100);
 }
