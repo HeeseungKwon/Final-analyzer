@@ -1,7 +1,6 @@
 import { clamp } from "@/lib/utils/math";
 
 export const MIN_RECOMMENDED_EDGE = 0.05;
-export const MIN_MODEL_CONFIDENCE = 50;
 // Quarter Kelly keeps sizing conservative while preserving most of the
 // long-run Kelly growth benefit with materially lower drawdown volatility.
 export const CONSERVATIVE_KELLY_MULTIPLIER = 0.25;
@@ -60,10 +59,6 @@ export function calculateRecommendedStake(kellyFraction) {
   return clamp((Number(kellyFraction) || 0) * CONSERVATIVE_KELLY_MULTIPLIER, 0, 0.25);
 }
 
-export function shouldRecommend(edge, dataQuality, confidence) {
-  return (
-    Number(edge) >= MIN_RECOMMENDED_EDGE &&
-    (dataQuality === "ok" || dataQuality === "partial") &&
-    Number(confidence) >= MIN_MODEL_CONFIDENCE
-  );
+export function shouldRecommend(edge) {
+  return Number(edge) > 0;
 }

@@ -537,7 +537,7 @@ export function edgeBasedScoring({
     kellyFraction,
     recommendedStake,
     edgeGrade,
-    recommended: shouldRecommend(edge, dataQuality, confidence),
+    recommended: shouldRecommend(edge),
   };
 }
 

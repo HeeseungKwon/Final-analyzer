@@ -77,7 +77,7 @@ export default function Today() {
           <div className="text-xs uppercase tracking-widest text-muted-foreground">Slate</div>
           <h1 className="text-3xl font-black tracking-tight">Today's projections</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Every projected hitter and starting pitcher is now compared against sportsbook implied odds. The app shows all model outputs, but only +5% edge plays are recommended.
+            Every projected hitter and starting pitcher is now compared against market implied odds. Picks where our model probability exceeds the market implied probability (edge {'>'} 0) are recommended.
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -118,8 +118,7 @@ export default function Today() {
             ? "Values are 0.000–1.000 (multiply by 100 for %)."
             : "Values are expected counts."}{" "}
           <b className="text-foreground">Floor</b> / <b className="text-foreground">Ceiling</b> are the same unit (10th/90th-percentile band).{" "}
-          <b className="text-foreground">Conf</b> is a 0–100 model confidence.{" "}
-          Recommendations require sportsbook edge ≥ +5%, confidence ≥ 50, and usable data quality.
+          Picks are recommended when our model probability exceeds market implied probability (edge {'>'} 0).
         </div>
       )}
 
@@ -164,11 +163,10 @@ export default function Today() {
                           <TableRow>
                             <TableHead>Player</TableHead>
                             <TableHead>Market</TableHead>
-                            <TableHead className="text-right">
+            <TableHead className="text-right">
                               Proj{market !== "all" && getMarketProjectionUnit(market) ? ` (${getMarketProjectionUnit(market).label})` : ""}
-                            </TableHead>
-                            <TableHead className="text-right">Conf</TableHead>
-                            <TableHead>Trigger</TableHead>
+                             </TableHead>
+                             <TableHead>Trigger</TableHead>
                             <TableHead className="text-right">Edge / Rec</TableHead>
                           </TableRow>
                         </TableHeader>
