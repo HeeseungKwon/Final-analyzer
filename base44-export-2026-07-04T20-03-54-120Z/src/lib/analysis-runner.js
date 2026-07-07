@@ -331,7 +331,7 @@ function topUpRecommendations(rows) {
   const MIN_DAILY_PICKS = 50;
 
   // Relaxed confidence gate for top-up candidates (vs primary gate range of 45–50).
-  // Set at 38 (~7 points below the lowest primary threshold) to capture near-miss
+  // Set at 38 (7 points below the lowest primary threshold) to capture near-miss
   // picks that are slightly below MARKET_MIN_CONFIDENCE thresholds (45–50) but still
   // represent real signal.
   // Picks at this level are treated as "honorable mentions" that only appear
