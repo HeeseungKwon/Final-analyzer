@@ -27,7 +27,7 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function compareRecommendedPicksByPriority(a, b) {
+function comparePicksByPriority(a, b) {
   return (
     getRecommendationMarketPriority(a.market) - getRecommendationMarketPriority(b.market) ||
     (b.rec_score ?? 0) - (a.rec_score ?? 0) ||
@@ -172,7 +172,7 @@ export default function Parlays() {
     () =>
       eligiblePredictions
         .filter((p) => selectedGamePks.has(p.game_pk) && p.recommended)
-        .sort(compareRecommendedPicksByPriority),
+        .sort(comparePicksByPriority),
     [eligiblePredictions, selectedGamePks]
   );
 

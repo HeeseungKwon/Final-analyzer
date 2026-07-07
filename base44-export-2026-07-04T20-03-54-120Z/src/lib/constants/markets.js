@@ -26,6 +26,8 @@ export const CORE_HITTER_MARKETS = [
   MARKET_KEYS.TOTAL_BASES,
 ];
 
+// Reused by recommendation sorting and parlay building, so keep the normalized
+// lookup set module-scoped instead of recreating it at every call site.
 const CORE_HITTER_MARKET_SET = new Set(CORE_HITTER_MARKETS);
 
 export const RECOMMENDATION_MARKET_PRIORITY = {

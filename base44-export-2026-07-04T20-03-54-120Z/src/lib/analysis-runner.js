@@ -44,6 +44,10 @@ const MARKET_TRUST_BONUS = {
 };
 
 const MARKET_RECOMMENDATION_FOCUS_BONUS = {
+  // Tuned as a soft portfolio nudge rather than a hard gate: core hitter props
+  // get a modest lift, while HR props take a modest penalty because they now
+  // live in a separate section and should not crowd out the higher-probability
+  // HRR / hits / TB recommendations.
   hrr_2: 8,
   hrr_3: 6,
   hit_2: 4,
@@ -53,6 +57,8 @@ const MARKET_RECOMMENDATION_FOCUS_BONUS = {
   // separately instead of letting them dominate the portfolio.
   home_run: -8,
 };
+// Small enough to preserve the underlying rec_score ordering, but large enough
+// to break close calls in favor of the configured market priority order.
 const PRIORITY_PENALTY_FACTOR = 0.75;
 
 const PORTFOLIO_STYLE_WEIGHTS = {

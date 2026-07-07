@@ -41,6 +41,8 @@ const MAX_RANKED_POOL_SIZE = 18;
 const MIN_PICK_EDGE = -0.04;
 const MIN_STRUCTURED_POOL_SIZE = 4;
 const MIN_HOME_RUN_POOL_SIZE = 6;
+// Keep enough HR candidates in the mixed-card search without letting the
+// lower-probability HR market overwhelm the core hitter pool.
 const HOME_RUN_POOL_SIZE = Math.max(MIN_HOME_RUN_POOL_SIZE, Math.ceil(MAX_RANKED_POOL_SIZE / 2));
 
 const CORRELATION_COMPONENTS = {
@@ -346,7 +348,9 @@ function buildStructuredParlayCandidates({
   const maxPerGame = adaptiveMaxPerGame(selectedGameCount, size);
 
   const search = (start, chosen, byGame, byPlayer, homeRunLegs) => {
-    // Stop the recursive search once we have a sufficiently deep candidate set.
+    // Stop once enough viable cards have been found; this bounded search keeps
+    // client-side combinatorics responsive while still producing a large
+    // candidate set for EV/correlation ranking on typical slates.
     if (candidates.length >= MAX_CANDIDATE_PARLAYS) return;
 
     const remaining = size - chosen.length;
@@ -491,9 +495,10 @@ export function buildParlays(predictions, selectedGamePks) {
     const pkSet = selectedGamePks instanceof Set ? selectedGamePks : new Set(selectedGamePks);
     if (pkSet.size === 0) return [];
     const strictPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality === "ok" && p.recommended);
+    const broaderPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing");
     const fallbackPool = strictPool.length >= MIN_STRUCTURED_POOL_SIZE
       ? strictPool
-      : predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing");
+      : broaderPool;
     if (fallbackPool.length < MIN_STRUCTURED_POOL_SIZE) return [];
 
     const scoredPool = [...fallbackPool]
