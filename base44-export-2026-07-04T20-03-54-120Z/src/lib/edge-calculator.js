@@ -48,10 +48,14 @@ export function calculateROI(modelProb, impliedProb, americanOdds) {
 }
 
 export function gradeEdge(edge) {
-  if (edge >= 0.10) return "A";
-  if (edge >= 0.075) return "B";
-  if (edge >= MIN_RECOMMENDED_EDGE) return "C";
-  if (edge > 0) return "D";
+  const edgeDecimal = Number(edge) || 0;
+  // Convert to percentage points for comparison (e.g., 0.05 → 5 pts)
+  const edgePts = edgeDecimal * 100;
+  
+  if (edgePts >= 10) return "A";
+  if (edgePts >= 7.5) return "B";
+  if (edgePts >= 5) return "C";
+  if (edgePts > 0) return "D";
   return "F";
 }
 
