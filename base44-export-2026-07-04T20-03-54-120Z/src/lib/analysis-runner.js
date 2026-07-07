@@ -50,6 +50,7 @@ const MARKET_RECOMMENDATION_FOCUS_BONUS = {
   total_bases: 2,
   home_run: -8,
 };
+const PRIORITY_PENALTY_FACTOR = 0.75;
 
 const PORTFOLIO_STYLE_WEIGHTS = {
   aggressive: 0.4,
@@ -116,7 +117,7 @@ function rankForPortfolio(row) {
     else if (row.verdict === "middling") verdictBonus = 5;
   }
 
-  const priorityPenalty = getRecommendationMarketPriority(row.market) * 0.75;
+  const priorityPenalty = getRecommendationMarketPriority(row.market) * PRIORITY_PENALTY_FACTOR;
 
   return (row.rec_score ?? 0) + consensusBonus + marketBonus + focusBonus + pOverBonus + edgeBonus + certaintyBonus + marketAlignment + verdictBonus - variancePenalty - priorityPenalty;
 }

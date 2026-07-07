@@ -39,6 +39,7 @@ const MIN_PARLAY_EV = -0.18;
 const MAX_PARLAY_OVERLAP = 0.67;
 const MAX_RANKED_POOL_SIZE = 18;
 const MIN_PICK_EDGE = -0.04;
+const MIN_HOME_RUN_POOL_SIZE = 6;
 
 const CORRELATION_COMPONENTS = {
   base: 0.03,
@@ -506,7 +507,7 @@ export function buildParlays(predictions, selectedGamePks) {
       .slice(0, MAX_RANKED_POOL_SIZE);
     const homeRunPool = scoredPool
       .filter((p) => p.market === "home_run")
-      .slice(0, Math.max(6, Math.ceil(MAX_RANKED_POOL_SIZE / 2)));
+      .slice(0, Math.max(MIN_HOME_RUN_POOL_SIZE, Math.ceil(MAX_RANKED_POOL_SIZE / 2)));
     if (corePool.length < 4) return [];
 
     const structuredParlays = [];
