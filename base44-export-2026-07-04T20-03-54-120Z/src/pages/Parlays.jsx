@@ -63,6 +63,9 @@ function ParlayCard({ parlay, selectable, selected, onToggle, onDelete }) {
         <div className="mb-3 flex flex-wrap gap-4 text-xs">
           <span><b>Legs:</b> {parlay.legs.length}</span>
           <span><b>Break-even @ -120 legs:</b> {(parlay.breakEvenProb * 100).toFixed(1)}%</span>
+          {Number.isFinite(parlay.ev) && <span><b>EV:</b> {(parlay.ev * 100).toFixed(1)}%</span>}
+          {Number.isFinite(parlay.avgConfidence) && <span><b>Avg Conf:</b> {Number(parlay.avgConfidence).toFixed(1)}</span>}
+          {Number.isFinite(parlay.correlation) && <span><b>Correlation:</b> {(parlay.correlation * 100).toFixed(1)}%</span>}
           <span>
             <b>Edge:</b>{" "}
             <span className={good ? "text-emerald-600 dark:text-emerald-400 font-semibold" : "text-destructive"}>
@@ -160,10 +163,31 @@ export default function Parlays() {
 
   // Analyzer-generated parlays for selected games
   const analyzerParlays = useMemo(
-    () => [
-      ...buildParlays(eligiblePredictions, selectedGamePks),
-      ...buildHRParlays(eligiblePredictions, selectedGamePks),
-    ],
+    () => {
+      const all = [
+        ...buildParlays(eligiblePredictions, selectedGamePks),
+        ...buildHRParlays(eligiblePredictions, selectedGamePks),
+      ];
+      const deduped = new Map();
+      for (const parlay of all) {
+        const signature = [...(parlay.legs ?? [])]
+          .map((leg) => `${leg.playerId}:${leg.market}`)
+          .sort()
+          .join("|");
+        const score =
+          Number(parlay.rankingScore ?? 0) +
+          Number(parlay.ev ?? 0) * 100 +
+          Number(parlay.avgConfidence ?? 0) * 0.5 -
+          Number(parlay.correlation ?? 0) * 22;
+        const current = deduped.get(signature);
+        if (!current || score > current._score) {
+          deduped.set(signature, { ...parlay, _score: score });
+        }
+      }
+      return [...deduped.values()]
+        .sort((a, b) => (b._score ?? 0) - (a._score ?? 0))
+        .map(({ _score, ...rest }) => rest);
+    },
     [eligiblePredictions, selectedGamePks]
   );
 
