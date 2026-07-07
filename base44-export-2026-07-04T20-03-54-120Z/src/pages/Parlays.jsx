@@ -215,8 +215,8 @@ export default function Parlays() {
                   <TableHead>Market</TableHead>
                   <TableHead className="text-right">Conf</TableHead>
                   <TableHead className="text-right">Proj</TableHead>
-                  <TableHead className="text-right">Grade</TableHead>
-                  <TableHead className="text-right">Rec Score</TableHead>
+                  <TableHead className="text-right">Edge Grade</TableHead>
+                  <TableHead className="text-right">Edge</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -250,7 +250,9 @@ export default function Parlays() {
                           {letterGrade}
                         </span>
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{Number(p.rec_score).toFixed(1)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {Number(p.rec_score) > 0 ? "+" : ""}{Number(p.rec_score).toFixed(1)} pts
+                      </TableCell>
                     </TableRow>
                   );
                 })}

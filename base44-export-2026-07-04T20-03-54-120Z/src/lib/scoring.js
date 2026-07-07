@@ -1,3 +1,12 @@
+import {
+  calculateEdge,
+  calculateKelly,
+  calculateROI,
+  calculateRecommendedStake,
+  gradeEdge,
+  shouldRecommend,
+} from "@/lib/edge-calculator";
+
 /**
  * Analysis Engine v2: Monte Carlo-based MLB Prop Analyzer
  * 
@@ -55,6 +64,27 @@ function log5(batterRate, pitcherRate, leagueRate) {
 
 function clamp(x, lo, hi) {
   return Math.max(lo, Math.min(hi, x));
+}
+
+function erf(x) {
+  const sign = x < 0 ? -1 : 1;
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const p = 0.3275911;
+  const absX = Math.abs(x);
+  const t = 1 / (1 + p * absX);
+  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX);
+  return sign * y;
+}
+
+function normalCdf(x, mean = 0, stdDev = 1) {
+  if (!Number.isFinite(stdDev) || stdDev <= 0) {
+    return x >= mean ? 1 : 0;
+  }
+  return 0.5 * (1 + erf((x - mean) / (stdDev * Math.sqrt(2))));
 }
 
 function toConfidence(prob, anchor = 0.5, slope = 120) {
@@ -439,6 +469,60 @@ export function scorePitcherV2(name, ctx) {
   return out;
 }
 
+function inferModelProbability({ market, projection, floor, ceiling, marketLine }) {
+  const projectedValue = Number(projection);
+  if (Number.isFinite(projectedValue) && projectedValue >= 0 && projectedValue <= 1 && market !== "strikeouts") {
+    return clamp(projectedValue, 0, 1);
+  }
+
+  const line = Number.isFinite(Number(marketLine)) ? Number(marketLine) : null;
+  if (market === "strikeouts" && Number.isFinite(projectedValue)) {
+    const floorValue = Number(floor);
+    const ceilingValue = Number(ceiling);
+    const inferredStdDev = Number.isFinite(ceilingValue - floorValue)
+      ? Math.max(0.85, Math.abs(ceilingValue - floorValue) / 2.56)
+      : Math.max(0.85, projectedValue * 0.18);
+    const threshold = line ?? 5.5;
+    return clamp(1 - normalCdf(threshold, projectedValue, inferredStdDev), 0.01, 0.99);
+  }
+
+  return clamp(Number.isFinite(projectedValue) ? projectedValue : 0, 0, 1);
+}
+
+export function edgeBasedScoring({
+  market,
+  projection,
+  floor,
+  ceiling,
+  confidence,
+  dataQuality,
+  marketOdds,
+  impliedProbability,
+  marketLine,
+}) {
+  const modelProbability = inferModelProbability({ market, projection, floor, ceiling, marketLine });
+  const marketProbability = clamp(Number(impliedProbability) || 0.5, 0.01, 0.99);
+  const edge = calculateEdge(modelProbability, marketProbability);
+  const { expectedValue, roi, decimalOdds } = calculateROI(modelProbability, marketProbability, marketOdds);
+  const kellyFraction = calculateKelly(modelProbability, decimalOdds);
+  const recommendedStake = calculateRecommendedStake(kellyFraction);
+  const edgeGrade = gradeEdge(edge);
+
+  return {
+    marketOdds,
+    marketLine: Number.isFinite(Number(marketLine)) ? Number(marketLine) : null,
+    impliedProbability: marketProbability,
+    modelProbability,
+    edge,
+    expectedValue,
+    roi,
+    kellyFraction,
+    recommendedStake,
+    edgeGrade,
+    recommended: shouldRecommend(edge, dataQuality, confidence),
+  };
+}
+
 export function parkFactorFor(homeTeamId) {
   const HR_PARK_FACTOR = {
     115: 118, 113: 116, 140: 113, 143: 111, 147: 110, 158: 108, 110: 108,
@@ -484,3 +568,4 @@ export function getHitterSimulationData(ctx) {
 }
 
 export { scoreHitterV2 as scoreHitter, scorePitcherV2 as scorePitcher };
+export { calculateEdge, calculateKelly, calculateROI, shouldRecommend };
