@@ -2,6 +2,8 @@ import { clamp } from "@/lib/utils/math";
 
 export const MIN_RECOMMENDED_EDGE = 0.05;
 export const MIN_MODEL_CONFIDENCE = 50;
+// Quarter Kelly keeps sizing conservative while preserving most of the
+// long-run Kelly growth benefit with materially lower drawdown volatility.
 export const CONSERVATIVE_KELLY_MULTIPLIER = 0.25;
 
 export function americanToDecimal(americanOdds) {

@@ -40,11 +40,11 @@ function confidenceColor(c) {
  */
 function verdictColor(verdict) {
   switch (verdict) {
-    case "edge":
+    case "recommended":
       return "border-emerald-500 text-emerald-600 bg-emerald-50";
-    case "lean":
+    case "marginal":
       return "border-blue-500 text-blue-600 bg-blue-50";
-    case "pass":
+    case "avoid":
       return "border-red-500 text-red-600 bg-red-50";
     default:
       return "border-muted-foreground text-muted-foreground";
@@ -177,8 +177,8 @@ export default function PredRow({ p, expanded, onToggle }) {
                       <div className="font-semibold tabular-nums">{fmtPct(modelProb)}</div>
                     </div>
                     <div>
-                      <div className="text-muted-foreground">Expected Value</div>
-                      <div className="font-semibold tabular-nums">{fmtPct(expectedValue)}</div>
+                      <div className="text-muted-foreground">EV (1u stake)</div>
+                      <div className="font-semibold tabular-nums">{fmt(expectedValue, 3)}</div>
                     </div>
                     <div>
                       <div className="text-muted-foreground">ROI</div>

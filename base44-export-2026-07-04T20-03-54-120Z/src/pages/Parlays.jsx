@@ -223,7 +223,7 @@ export default function Parlays() {
                 {picks.map((p) => {
                   const picked = customSelectedPickIds.has(p.id);
                   const { letterGrade } = computePickGrade(p);
-                  const edgePoints = Number(p.rec_score);
+                  const edgePct = Number(p.rec_score);
                   return (
                     <TableRow
                       key={p.id}
@@ -252,7 +252,7 @@ export default function Parlays() {
                         </span>
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {edgePoints > 0 ? "+" : ""}{edgePoints.toFixed(1)} pts
+                        {edgePct > 0 ? "+" : ""}{edgePct.toFixed(1)} pts
                       </TableCell>
                     </TableRow>
                   );

@@ -32,8 +32,10 @@ function parseFeatures(raw) {
 function rebalanceRecommendations(rows) {
   rows.forEach((row) => {
     const features = parseFeatures(row.features);
-    // Keep writing the legacy `rec_score` field for downstream pages/entities,
-    // but its meaning is now edge in percentage points (for example +6.5).
+    // Backward-compatibility note: downstream pages/entities still read the
+    // legacy `rec_score` field, so edge is mirrored there as percentage points
+    // (for example +6.5). All new edge-aware consumers should prefer
+    // `features.edge` / `features.modelEdge`.
     row.rec_score = Math.round((Number(features.edge ?? 0) * 100) * 100) / 100;
     row.recommended = Boolean(features.recommended ?? row.recommended);
   });
@@ -272,7 +274,7 @@ export async function runAnalysis(dateArg, onProgress) {
             simulationData = getHitterSimulationData(baseCtx);
           } catch {}
 
-          for (const s of modernScores) {
+          const scoredPredictions = await Promise.all(modernScores.map(async (s) => {
             const oddsInfo = await fetchRealtimeOdds(g.game_pk, s.market, lp.fullName);
             const edgeMetrics = edgeBasedScoring({
               market: s.market,
@@ -307,7 +309,7 @@ export async function runAnalysis(dateArg, onProgress) {
               data_quality: s.dataQuality,
               recommended: edgeMetrics.recommended,
               rec_score: Math.round(edgeMetrics.edge * 10000) / 100,
-              verdict: edgeMetrics.recommended ? "edge" : edgeMetrics.edge > 0 ? "lean" : "pass",
+              verdict: edgeMetrics.recommended ? "recommended" : edgeMetrics.edge > 0 ? "marginal" : "avoid",
               verdict_note: `Model ${(edgeMetrics.modelProbability * 100).toFixed(1)}% vs market ${(edgeMetrics.impliedProbability * 100).toFixed(1)}% (${edgeMetrics.marketOdds > 0 ? "+" : ""}${edgeMetrics.marketOdds})`,
             };
             
@@ -349,8 +351,10 @@ export async function runAnalysis(dateArg, onProgress) {
               }
             }
             
-            predictionRows.push(predRow);
-          }
+            return predRow;
+          }));
+
+          predictionRows.push(...scoredPredictions);
         } catch (e) {
           excludedRows.push({ game_date: date, player_id: lp.id, player_name: lp.fullName, reason: `Error: ${e.message}` });
         }
@@ -417,7 +421,7 @@ export async function runAnalysis(dateArg, onProgress) {
             data_quality: s.dataQuality,
             recommended: edgeMetrics.recommended,
             rec_score: Math.round(edgeMetrics.edge * 10000) / 100,
-            verdict: edgeMetrics.recommended ? "edge" : edgeMetrics.edge > 0 ? "lean" : "pass",
+            verdict: edgeMetrics.recommended ? "recommended" : edgeMetrics.edge > 0 ? "marginal" : "avoid",
             verdict_note: `Model ${(edgeMetrics.modelProbability * 100).toFixed(1)}% vs market ${(edgeMetrics.impliedProbability * 100).toFixed(1)}% (${edgeMetrics.marketOdds > 0 ? "+" : ""}${edgeMetrics.marketOdds})`,
           });
         }

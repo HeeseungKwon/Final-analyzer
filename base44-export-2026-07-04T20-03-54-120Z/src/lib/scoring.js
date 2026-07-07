@@ -26,8 +26,11 @@ const LEAGUE_AVG = {
 
 const LEAGUE_AVG_RUNS_PER_GAME = 4.5;
 const LEAGUE_AVG_BARREL_PCT = 0.075;
+// 10th/90th percentile bands span ~2.56 standard deviations in a normal model.
 const INFERRED_STDDEV_Z_SPREAD = 2.56;
+// Keep inferred strikeout distributions from collapsing unrealistically tight.
 const MIN_INFERRED_STDDEV = 0.85;
+// Fallback spread when only the mean projection is available.
 const PROJECTION_STDDEV_RATIO = 0.18;
 
 const LINEUP_PA_TABLE = {
@@ -70,6 +73,7 @@ function clamp(x, lo, hi) {
 }
 
 function erf(x) {
+  // Abramowitz & Stegun 7.1.26 approximation; accurate to roughly 1.5e-7.
   const sign = x < 0 ? -1 : 1;
   const a1 = 0.254829592;
   const a2 = -0.284496736;

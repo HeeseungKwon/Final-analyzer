@@ -1,5 +1,7 @@
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb";
 const CACHE_TTL_MS = 5 * 60 * 1000;
+// Treat lines within roughly one tenth of a unit as equivalent so small API
+// representation differences (1.5 vs 1.49/1.6) do not block a usable match.
 const LINE_MATCH_TOLERANCE = 0.11;
 const MIN_CANDIDATE_SCORE = 7;
 
