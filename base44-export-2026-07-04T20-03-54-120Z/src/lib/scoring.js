@@ -96,8 +96,10 @@ function normalCdf(x, mean = 0, stdDev = 1) {
 }
 
 function toConfidence(prob, anchor = 0.5, slope = 120) {
-  const c = 50 + slope * (prob - anchor);
-  return clamp(c, 0, 100);
+  const midpoint = clamp(Number(anchor) || 0.5, 0, 1);
+  const probability = clamp(Number(prob) || 0, 0, 1);
+  const steepness = Math.max(1, Number(slope) || 120) / 18;
+  return clamp(100 / (1 + Math.exp(-(probability - midpoint) * steepness)), 0, 100);
 }
 
 /**

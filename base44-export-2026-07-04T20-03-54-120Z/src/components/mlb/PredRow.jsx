@@ -82,6 +82,10 @@ export default function PredRow({ p, expanded, onToggle }) {
   const kellyFraction = features?.kellyFraction ?? null;
   const recommendedStake = features?.recommendedStake ?? null;
   const marketLine = features?.marketLine ?? null;
+  const oddsSource = features?.oddsSource ?? null;
+  const oddsProvider = features?.sportsbookProvider ?? null;
+  const oddsFallback = features?.oddsFallback ?? null;
+  const oddsFallbackReason = features?.oddsFallbackReason ?? null;
   const tbOver15Prob = features?.tbOver1_5Prob;
   const hrrOver15Prob = features?.hrrOver1_5Prob;
   const hrrOver25Prob = features?.hrrOver2_5Prob;
@@ -175,6 +179,16 @@ export default function PredRow({ p, expanded, onToggle }) {
                     <div>
                       <div className="text-muted-foreground">Model Probability</div>
                       <div className="font-semibold tabular-nums">{fmtPct(modelProb)}</div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">Odds Source</div>
+                      <div className="font-semibold">{oddsProvider ?? oddsSource ?? "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">Odds Status</div>
+                      <div className="font-semibold">
+                        {oddsFallback ? `Fallback${oddsFallbackReason ? ` (${oddsFallbackReason})` : ""}` : "Live"}
+                      </div>
                     </div>
                     <div>
                       <div className="text-muted-foreground">EV (1u stake)</div>
