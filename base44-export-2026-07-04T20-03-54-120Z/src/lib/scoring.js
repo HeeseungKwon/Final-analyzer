@@ -111,6 +111,12 @@ function estimateExpectedPA(lineupSpot, teamImpliedTotal) {
 /**
  * Simulate game with correlated outcomes
  * Draws Hit/TB/HR and Run/RBI together per PA to preserve relationships
+ * 
+ * Run/RBI estimation refined to use:
+ * - onbase_rate_behind: affects probability of scoring after getting on base
+ * - onbase_rate_ahead: affects probability of getting RBI
+ * - team_implied_total: overall scoring environment
+ * - outcome type: extra base hits get higher RBI probability
  */
 function simulateGame(batter, pitcher, ctx, nSims = 100000) {
   const outcomes = ["1b", "2b", "3b", "hr", "bb", "hbp", "k", "out"];
@@ -152,9 +158,14 @@ function simulateGame(batter, pitcher, ctx, nSims = 100000) {
       const is2b = outcome === "2b";
       const is3b = outcome === "3b";
       const isHR = outcome === "hr";
-      const isOnBase = is1b || is2b || is3b || isHR || outcome === "bb" || outcome === "hbp";
+      const isBB = outcome === "bb";
+      const isHBP = outcome === "hbp";
+      const isOnBase = is1b || is2b || is3b || isHR || isBB || isHBP;
       
+      // Hit tracking
       if (is1b || is2b || is3b || isHR) totalHits[sim]++;
+      
+      // Total Bases tracking
       if (is1b) totalTB[sim] += 1;
       else if (is2b) totalTB[sim] += 2;
       else if (is3b) totalTB[sim] += 3;
@@ -162,9 +173,16 @@ function simulateGame(batter, pitcher, ctx, nSims = 100000) {
       
       if (isHR) totalHR[sim]++;
       
-      // Run estimation: higher for HR, conditional on onbase rate behind
+      // --- Run estimation (refined)
+      // HR is always a run for the batter. Non-HR runners get base-dependent probability
+      // Run prob scales with onbase_rate_behind (more runners on base → more chances to score)
       const onbaseRateBehind = ctx.onbaseRateBehind ?? 0.320;
-      const runProbIfOnbase = Math.min(0.55, 0.22 + 0.55 * (onbaseRateBehind - LEAGUE_AVG.bb) * 3 + 0.05 * ((ctx.teamImpliedTotal ?? 4.5) - LEAGUE_AVG_RUNS_PER_GAME));
+      const teamImpliedTotal = ctx.teamImpliedTotal ?? LEAGUE_AVG_RUNS_PER_GAME;
+      const runProbIfOnbase = Math.max(0.10, Math.min(0.55,
+        0.22 
+        + 0.55 * (onbaseRateBehind - LEAGUE_AVG.bb) * 3
+        + 0.05 * (teamImpliedTotal - LEAGUE_AVG_RUNS_PER_GAME)
+      ));
       
       if (isHR) {
         totalRuns[sim]++;
@@ -172,18 +190,34 @@ function simulateGame(batter, pitcher, ctx, nSims = 100000) {
         totalRuns[sim]++;
       }
       
-      // RBI estimation: depends on outcome type + onbase rate ahead
+      // --- RBI estimation (refined)
+      // RBI probability depends on:
+      // 1. Outcome type (singles have lower RBI prob than extra base hits)
+      // 2. onbase_rate_ahead (runners already on base)
+      // 3. For HR: guaranteed 1 RBI + potential extra for runners on base
       const onbaseRateAhead = ctx.onbaseRateAhead ?? 0.320;
-      let rbiProb = 0;
-      if (is1b) rbiProb = Math.min(0.30, 0.10 + 0.5 * (onbaseRateAhead - 0.32));
-      else if (is2b) rbiProb = Math.min(0.55, 0.28 + 0.6 * (onbaseRateAhead - 0.32));
-      else if (is3b) rbiProb = Math.min(0.75, 0.45 + 0.6 * (onbaseRateAhead - 0.32));
       
-      if ((is1b || is2b || is3b) && rng() < rbiProb) totalRBI[sim]++;
+      // Base RBI probabilities for singles, doubles, triples
+      const rbiProb1b = Math.max(0.03, Math.min(0.30,
+        0.10 + 0.5 * (onbaseRateAhead - 0.32)
+      ));
+      const rbiProb2b = Math.max(0.10, Math.min(0.55,
+        0.28 + 0.6 * (onbaseRateAhead - 0.32)
+      ));
+      const rbiProb3b = Math.max(0.20, Math.min(0.75,
+        0.45 + 0.6 * (onbaseRateAhead - 0.32)
+      ));
       
+      // Apply RBI outcomes
+      if (is1b && rng() < rbiProb1b) totalRBI[sim]++;
+      else if (is2b && rng() < rbiProb2b) totalRBI[sim]++;
+      else if (is3b && rng() < rbiProb3b) totalRBI[sim]++;
+      
+      // HR: guaranteed 1 RBI + potential extra RBIs from runners on base
       if (isHR) {
         totalRBI[sim]++;
-        const extraRBIProb = Math.min(1, Math.max(0, onbaseRateAhead * 1.8));
+        // Extra RBI chance (runners already on base score)
+        const extraRBIProb = Math.max(0, Math.min(1, onbaseRateAhead * 1.8));
         if (rng() < extraRBIProb) totalRBI[sim]++;
       }
     }
