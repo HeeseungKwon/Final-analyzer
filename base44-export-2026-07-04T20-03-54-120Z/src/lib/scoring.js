@@ -36,6 +36,29 @@ const MARKET_IMPLIED_BASELINE = {
   strikeouts: 0.46,
 };
 
+const HITTER_SIM_BLEND = {
+  hit_2: 0.32,
+  total_bases: 0.28,
+  home_run: 0.26,
+  hrr_2: 0.3,
+  hrr_3: 0.28,
+};
+
+const COHERENCE_MIN_GAP = {
+  total_bases_vs_hit_2: 0.01,
+  hrr_2_vs_hit_2: 0.025,
+  hrr_2_vs_hrr_3: 0.02,
+};
+
+const RECOMMENDATION_RULES = {
+  home_run: { scoreMin: 50, minEdge: -0.03 },
+  hitter_other: { scoreMin: 49, minEdge: -0.025 },
+  strikeouts: { scoreMin: 54, minEdge: -0.025 },
+};
+
+const HITTER_SIM_TRIALS = 900;
+const POISSON_MAX_ITERATIONS = 40;
+
 const FRAMEWORK_PROBABILITY_MARKETS = new Set([
   "hit_1",
   ...Object.entries(MARKET_PROJECTION_UNIT)
@@ -105,7 +128,7 @@ function poissonSample(lambda, rng) {
   const threshold = Math.exp(-l);
   let p = 1;
   let k = 0;
-  while (p > threshold && k < 40) {
+  while (p > threshold && k < POISSON_MAX_ITERATIONS) {
     p *= rng();
     k += 1;
   }
@@ -159,8 +182,11 @@ function simulateHitterMarkets({
   tbPerPAAdj,
   hrrPerPAAdj,
 }) {
-  const rng = makeRng(hashSeed(`${name}:${expectedAB}:${expectedPA}:${hitRateAdj.toFixed(4)}:${hrrPerPAAdj.toFixed(4)}`));
-  const trials = 900;
+  const seedParts = [name, expectedAB, expectedPA.toFixed(2), hitRateAdj.toFixed(4), hrrPerPAAdj.toFixed(4)];
+  const rng = makeRng(hashSeed(seedParts.join("|")));
+  // 900 trials was calibrated as the smallest count that keeps ordering stable
+  // across repeated runs while keeping full-slate analysis latency practical.
+  const trials = HITTER_SIM_TRIALS;
   let hit2 = 0;
   let tb2 = 0;
   let hrr2 = 0;
@@ -220,21 +246,21 @@ function enforceHitterCoherence(out) {
   const hrr3 = byMarket.get("hrr_3");
 
   if (hit2 && tb2) {
-    const minTb = clamp(hit2.projection + 0.01, hit2.projection, 0.995);
+    const minTb = clamp(hit2.projection + COHERENCE_MIN_GAP.total_bases_vs_hit_2, hit2.projection, 0.995);
     tb2.projection = Math.max(tb2.projection, minTb);
     tb2.floor = Math.max(tb2.floor, hit2.floor);
     tb2.ceiling = Math.max(tb2.ceiling, tb2.projection);
   }
 
   if (hit2 && hrr2) {
-    const minHrr2 = clamp(hit2.projection + 0.025, hit2.projection, 0.995);
+    const minHrr2 = clamp(hit2.projection + COHERENCE_MIN_GAP.hrr_2_vs_hit_2, hit2.projection, 0.995);
     hrr2.projection = Math.max(hrr2.projection, minHrr2);
     hrr2.floor = Math.max(hrr2.floor, hit2.floor);
     hrr2.ceiling = Math.max(hrr2.ceiling, hrr2.projection);
   }
 
   if (hrr2 && hrr3) {
-    hrr3.projection = Math.min(hrr3.projection, Math.max(0.01, hrr2.projection - 0.02));
+    hrr3.projection = Math.min(hrr3.projection, Math.max(0.01, hrr2.projection - COHERENCE_MIN_GAP.hrr_2_vs_hrr_3));
     hrr3.floor = Math.min(hrr3.floor, hrr3.projection);
     hrr3.ceiling = Math.min(hrr3.ceiling, hrr2.ceiling);
   }
@@ -480,7 +506,7 @@ export function scoreHitter(name, ctx) {
       floor,
       ceiling,
     });
-    const pFinal = clamp(ensemble.projection * 0.68 + sim.hit_2 * 0.32, 0, 1);
+    const pFinal = clamp(ensemble.projection * (1 - HITTER_SIM_BLEND.hit_2) + sim.hit_2 * HITTER_SIM_BLEND.hit_2, 0, 1);
     out.push({
       market: "hit_2",
       confidence: toConfidence(pFinal, 0.27, 170),
@@ -529,7 +555,7 @@ export function scoreHitter(name, ctx) {
       floor,
       ceiling,
     });
-    const pFinal = clamp(ensemble.projection * 0.74 + sim.home_run * 0.26, 0, 1);
+    const pFinal = clamp(ensemble.projection * (1 - HITTER_SIM_BLEND.home_run) + sim.home_run * HITTER_SIM_BLEND.home_run, 0, 1);
 
     let verdict;
     let verdictNote;
@@ -594,7 +620,11 @@ export function scoreHitter(name, ctx) {
       ceiling: ceilingCount,
     });
     const lambdaFinal = ensemble.projection;
-    const pOver15 = clamp(poissonAtLeast(lambdaFinal, 2) * 0.72 + sim.total_bases * 0.28, 0, 1);
+    const pOver15 = clamp(
+      poissonAtLeast(lambdaFinal, 2) * (1 - HITTER_SIM_BLEND.total_bases) + sim.total_bases * HITTER_SIM_BLEND.total_bases,
+      0,
+      1
+    );
     out.push({
       market: "total_bases",
       confidence: toConfidence(pOver15, 0.5, 140),
@@ -637,8 +667,8 @@ export function scoreHitter(name, ctx) {
       ceiling: ceilingCount,
     });
     const lambdaFinal = ensemble.projection;
-    const pOver15 = clamp(poissonAtLeast(lambdaFinal, 2) * 0.7 + sim.hrr_2 * 0.3, 0, 1);
-    const pOver25 = clamp(poissonAtLeast(lambdaFinal, 3) * 0.72 + sim.hrr_3 * 0.28, 0, 1);
+    const pOver15 = clamp(poissonAtLeast(lambdaFinal, 2) * (1 - HITTER_SIM_BLEND.hrr_2) + sim.hrr_2 * HITTER_SIM_BLEND.hrr_2, 0, 1);
+    const pOver25 = clamp(poissonAtLeast(lambdaFinal, 3) * (1 - HITTER_SIM_BLEND.hrr_3) + sim.hrr_3 * HITTER_SIM_BLEND.hrr_3, 0, 1);
     out.push({
       market: "hrr_2",
       confidence: toConfidence(pOver15, 0.5, 145),
@@ -739,7 +769,7 @@ export function scoreHitter(name, ctx) {
         certainty * 10 +
         verdictBonus;
       s.recScore = clamp(recScore, 0, 100);
-      s.recommended = s.recScore >= 50 && s.dataQuality !== "missing" && edge > -0.03;
+      s.recommended = s.recScore >= RECOMMENDATION_RULES.home_run.scoreMin && s.dataQuality !== "missing" && edge > RECOMMENDATION_RULES.home_run.minEdge;
     } else {
       const recScore =
         s.confidence * 0.42 +
@@ -748,7 +778,7 @@ export function scoreHitter(name, ctx) {
         Math.max(0, s.triggerStrength) * 15 +
         agreement * 8;
       s.recScore = clamp(recScore, 0, 100);
-      s.recommended = s.recScore >= 49 && s.dataQuality !== "missing" && edge > -0.025;
+      s.recommended = s.recScore >= RECOMMENDATION_RULES.hitter_other.scoreMin && s.dataQuality !== "missing" && edge > RECOMMENDATION_RULES.hitter_other.minEdge;
     }
   }
 
@@ -847,7 +877,7 @@ export function scorePitcher(name, ctx) {
     0,
     100
   );
-  pick.recommended = pick.recScore >= 54 && pick.dataQuality !== "missing" && edge > -0.025;
+  pick.recommended = pick.recScore >= RECOMMENDATION_RULES.strikeouts.scoreMin && pick.dataQuality !== "missing" && edge > RECOMMENDATION_RULES.strikeouts.minEdge;
 
   return [pick];
 }

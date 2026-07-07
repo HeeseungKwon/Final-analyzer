@@ -58,6 +58,13 @@ const MARKET_POPULARITY = {
   home_run: 0.62,
 };
 
+const REDUNDANCY_RULES = {
+  maxPicksPerPlayer: 2,
+  maxPerGame: 6,
+  hrr3EdgeDelta: 0.015,
+  hrr3MinConfidence: 58,
+};
+
 const CONSENSUS_THRESHOLD = {
   hit_2: 62,
   hrr_2: 61,
@@ -133,9 +140,9 @@ function rebalanceRecommendations(rows) {
   // types (HR, HRR, TB, Hits) counts as ONE unique player toward this target.
   // When fewer than 50 valid candidates exist all available players are returned.
   const TARGET_UNIQUE_PLAYERS = 50;
-  // Keep at most two markets per player to limit duplicate/near-identical exposure.
-  const MAX_PICKS_PER_PLAYER = 2;
-  const MAX_PER_GAME = 6;
+  // Keep at most two markets per player to reduce redundant exposure while
+  // still allowing one secondary market when edge is materially distinct.
+  const MAX_PICKS_PER_PLAYER = REDUNDANCY_RULES.maxPicksPerPlayer;
   const POWER_MARKETS = new Set(["home_run", "hrr_2", "hrr_3", "total_bases"]);
 
   const candidates = rows
@@ -177,7 +184,7 @@ function rebalanceRecommendations(rows) {
     if (POWER_MARKETS.has(c.row.market) && playerPowerTaken.has(c.row.player_id)) return false;
 
     const gameCount = byGame.get(c.row.game_pk) ?? 0;
-    if (gameCount >= MAX_PER_GAME) return false;
+    if (gameCount >= REDUNDANCY_RULES.maxPerGame) return false;
 
     const families = playerFamilies.get(c.row.player_id) ?? new Set();
     const family = marketFamily(c.row.market);
@@ -223,55 +230,6 @@ function rebalanceRecommendations(rows) {
       take(c);
       uniqueInStyle += 1;
     }
-
-    function marketFamily(market) {
-      if (market === "strikeouts") return "pitcher_k";
-      if (market === "home_run") return "home_run";
-      if (market === "hrr_3") return "hrr_ladder";
-      return "contact_combo";
-    }
-
-    function pruneRedundantRecommendations(rows) {
-      const recommendedByPlayer = new Map();
-      rows.forEach((row, idx) => {
-        if (!row.recommended) return;
-        if (!recommendedByPlayer.has(row.player_id)) recommendedByPlayer.set(row.player_id, []);
-        recommendedByPlayer.get(row.player_id).push({ row, idx, features: parseFeatures(row.features) });
-      });
-
-      for (const picks of recommendedByPlayer.values()) {
-        if (picks.length <= 1) continue;
-        picks.sort((a, b) => (b.row.rec_score ?? 0) - (a.row.rec_score ?? 0));
-
-        const keep = new Set();
-        const familyBest = new Map();
-        for (const pick of picks) {
-          const family = marketFamily(pick.row.market);
-          const existing = familyBest.get(family);
-          if (!existing || (pick.row.rec_score ?? 0) > (existing.row.rec_score ?? 0)) {
-            familyBest.set(family, pick);
-          }
-        }
-
-        for (const best of familyBest.values()) keep.add(best.idx);
-
-        const hrr2 = picks.find((p) => p.row.market === "hrr_2");
-        const hrr3 = picks.find((p) => p.row.market === "hrr_3");
-        if (hrr2 && hrr3) {
-          const hrr3Edge = Number(hrr3.features.modelEdge ?? 0);
-          const hrr2Edge = Number(hrr2.features.modelEdge ?? 0);
-          if (hrr3Edge >= hrr2Edge + 0.015 && (hrr3.row.confidence ?? 0) >= 58) {
-            keep.add(hrr3.idx);
-          } else {
-            keep.delete(hrr3.idx);
-          }
-        }
-
-        picks.forEach((pick) => {
-          rows[pick.idx].recommended = keep.has(pick.idx);
-        });
-      }
-    }
   }
 
   // Phase 2: Single pass over all candidates — fills remaining unique-player slots
@@ -286,6 +244,58 @@ function rebalanceRecommendations(rows) {
   rows.forEach((r, idx) => {
     r.recommended = selected.has(idx);
   });
+}
+
+function marketFamily(market) {
+  if (market === "strikeouts") return "pitcher_k";
+  if (market === "home_run") return "home_run";
+  if (market === "hrr_3") return "hrr_ladder";
+  return "contact_combo";
+}
+
+function pruneRedundantRecommendations(rows) {
+  const recommendedByPlayer = new Map();
+  rows.forEach((row, idx) => {
+    if (!row.recommended) return;
+    if (!recommendedByPlayer.has(row.player_id)) recommendedByPlayer.set(row.player_id, []);
+    recommendedByPlayer.get(row.player_id).push({ row, idx, features: parseFeatures(row.features) });
+  });
+
+  for (const picks of recommendedByPlayer.values()) {
+    if (picks.length <= 1) continue;
+    picks.sort((a, b) => (b.row.rec_score ?? 0) - (a.row.rec_score ?? 0));
+
+    const keep = new Set();
+    const familyBest = new Map();
+    for (const pick of picks) {
+      const family = marketFamily(pick.row.market);
+      const existing = familyBest.get(family);
+      if (!existing || (pick.row.rec_score ?? 0) > (existing.row.rec_score ?? 0)) {
+        familyBest.set(family, pick);
+      }
+    }
+
+    for (const best of familyBest.values()) keep.add(best.idx);
+
+    const hrr2 = picks.find((p) => p.row.market === "hrr_2");
+    const hrr3 = picks.find((p) => p.row.market === "hrr_3");
+    if (hrr2 && hrr3) {
+      const hrr3Edge = Number(hrr3.features.modelEdge ?? 0);
+      const hrr2Edge = Number(hrr2.features.modelEdge ?? 0);
+      if (
+        hrr3Edge >= hrr2Edge + REDUNDANCY_RULES.hrr3EdgeDelta &&
+        (hrr3.row.confidence ?? 0) >= REDUNDANCY_RULES.hrr3MinConfidence
+      ) {
+        keep.add(hrr3.idx);
+      } else {
+        keep.delete(hrr3.idx);
+      }
+    }
+
+    picks.forEach((pick) => {
+      rows[pick.idx].recommended = keep.has(pick.idx);
+    });
+  }
 }
 
 /**

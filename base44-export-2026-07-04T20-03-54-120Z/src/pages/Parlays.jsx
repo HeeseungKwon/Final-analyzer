@@ -15,6 +15,11 @@ import { getMarketLabel } from "@/lib/constants/markets";
 import { computePickGrade, gradeColorClass } from "@/lib/utils/pickGrade";
 
 const DAILY_PARLAYS_KEY = "dailyParlays_v1";
+const ANALYZER_PARLAY_SCORE_WEIGHTS = {
+  ev: 100,
+  confidence: 0.5,
+  correlationPenalty: 22,
+};
 
 let _idSeq = 0;
 function genId(prefix) {
@@ -176,17 +181,17 @@ export default function Parlays() {
           .join("|");
         const score =
           Number(parlay.rankingScore ?? 0) +
-          Number(parlay.ev ?? 0) * 100 +
-          Number(parlay.avgConfidence ?? 0) * 0.5 -
-          Number(parlay.correlation ?? 0) * 22;
+          Number(parlay.ev ?? 0) * ANALYZER_PARLAY_SCORE_WEIGHTS.ev +
+          Number(parlay.avgConfidence ?? 0) * ANALYZER_PARLAY_SCORE_WEIGHTS.confidence -
+          Number(parlay.correlation ?? 0) * ANALYZER_PARLAY_SCORE_WEIGHTS.correlationPenalty;
         const current = deduped.get(signature);
-        if (!current || score > current._score) {
-          deduped.set(signature, { ...parlay, _score: score });
+        if (!current || score > current.score) {
+          deduped.set(signature, { parlay, score });
         }
       }
       return [...deduped.values()]
-        .sort((a, b) => (b._score ?? 0) - (a._score ?? 0))
-        .map(({ _score, ...rest }) => rest);
+        .sort((a, b) => b.score - a.score)
+        .map((entry) => entry.parlay);
     },
     [eligiblePredictions, selectedGamePks]
   );

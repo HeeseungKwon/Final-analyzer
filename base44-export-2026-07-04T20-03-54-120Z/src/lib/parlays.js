@@ -23,6 +23,31 @@ const SLOT_LABELS = {
   left: "Games Left",
 };
 
+const PARLAY_RANK_WEIGHTS = {
+  ev: 100,
+  confidence: 0.52,
+  correlationPenalty: 28,
+  edge: 85,
+};
+
+// Keeps brute-force combination search responsive in the client for large slates.
+const MAX_CANDIDATE_PARLAYS = 140;
+// Reject only deeply negative cards; keep slightly negative options for thin slates.
+const MIN_PARLAY_EV = -0.18;
+// Parlays sharing >=67% of legs are considered redundant portfolio exposure.
+const MAX_PARLAY_OVERLAP = 0.67;
+const MAX_RANKED_POOL_SIZE = 18;
+const MAX_PICKS_PER_FAMILY = 2;
+const MIN_PICK_EDGE = -0.04;
+
+const CORRELATION_COMPONENTS = {
+  base: 0.03,
+  samePlayer: 0.56,
+  sameGame: 0.18,
+  sameFamily: 0.13,
+  sameMarket: 0.06,
+};
+
 function pdtMinutesFromIso(isoUtc) {
   if (!isoUtc) return null;
   const d = new Date(isoUtc);
@@ -214,11 +239,11 @@ function impliedProbForPrediction(p) {
 }
 
 function pairCorrelation(a, b) {
-  let corr = 0.03;
-  if (a.player_id === b.player_id) corr += 0.56;
-  if (a.game_pk === b.game_pk) corr += 0.18;
-  if (marketFamily(a.market) === marketFamily(b.market)) corr += 0.13;
-  if (a.market === b.market) corr += 0.06;
+  let corr = CORRELATION_COMPONENTS.base;
+  if (a.player_id === b.player_id) corr += CORRELATION_COMPONENTS.samePlayer;
+  if (a.game_pk === b.game_pk) corr += CORRELATION_COMPONENTS.sameGame;
+  if (marketFamily(a.market) === marketFamily(b.market)) corr += CORRELATION_COMPONENTS.sameFamily;
+  if (a.market === b.market) corr += CORRELATION_COMPONENTS.sameMarket;
   return clamp(corr, 0, 0.85);
 }
 
@@ -248,7 +273,11 @@ function enrichParlayRanking(parlay, rawLegs) {
   const correlation = parlayCorrelation(rawLegs);
   const confidence = parlay.avgConfidence ?? 0;
   const ev = parlay.ev ?? 0;
-  const rankingScore = ev * 100 + confidence * 0.52 - correlation * 28 + (parlay.avgEdge ?? 0) * 85;
+  const rankingScore =
+    ev * PARLAY_RANK_WEIGHTS.ev +
+    confidence * PARLAY_RANK_WEIGHTS.confidence -
+    correlation * PARLAY_RANK_WEIGHTS.correlationPenalty +
+    (parlay.avgEdge ?? 0) * PARLAY_RANK_WEIGHTS.edge;
   return {
     ...parlay,
     correlation,
@@ -261,10 +290,15 @@ function dedupeAndRankParlays(candidates, limit = 8) {
   const out = [];
   for (const cand of sorted) {
     if (out.length >= limit) break;
-    if (out.some((existing) => overlapRatio(existing, cand) >= 0.67)) continue;
+    // Shared legs above MAX_PARLAY_OVERLAP means the parlay is mostly duplicate exposure.
+    if (out.some((existing) => overlapRatio(existing, cand) >= MAX_PARLAY_OVERLAP)) continue;
     out.push(cand);
   }
   return out;
+}
+
+function adaptiveMaxPerGame(selectedGameCount, legSize) {
+  return Math.max(1, Math.ceil(legSize / Math.max(1, Math.min(selectedGameCount, legSize))));
 }
 
 /**
@@ -392,31 +426,33 @@ export function buildParlays(predictions, selectedGamePks) {
         (b.rec_score ?? 0) - (a.rec_score ?? 0) ||
         (b.confidence ?? 0) - (a.confidence ?? 0)
       )
-      .slice(0, 18);
+      .slice(0, MAX_RANKED_POOL_SIZE);
 
     const candidates = [];
     const legSizes = [2, 3, 4, 5].filter((size) => size <= ranked.length);
 
     const buildCombos = (size, start = 0, chosen = [], byGame = new Map(), byPlayer = new Map(), familyCount = new Map()) => {
-      if (candidates.length >= 140) return;
+      // Cap candidates at MAX_CANDIDATE_PARLAYS to keep combo search responsive in-browser.
+      if (candidates.length >= MAX_CANDIDATE_PARLAYS) return;
       if (chosen.length === size) {
         const legs = chosen.map((pick) => toLeg(pick, `auto-ranked ${size}-leg combination`));
         const parlay = assembleParlay(`${size}-Leg Candidate`, `${size}-leg portfolio optimized for EV/confidence/correlation.`, legs, size);
         if (!parlay) return;
         const enriched = enrichParlayRanking(parlay, chosen);
-        if (enriched.ev < -0.18) return;
+        // Drop cards below MIN_PARLAY_EV; keep mild negatives so low-volume slates still produce options.
+        if (enriched.ev < MIN_PARLAY_EV) return;
         candidates.push(enriched);
         return;
       }
 
       for (let i = start; i < ranked.length; i++) {
         const pick = ranked[i];
-        const maxPerGame = Math.max(1, Math.ceil(size / Math.max(1, Math.min(pkSet.size, size))));
+        const maxPerGame = adaptiveMaxPerGame(pkSet.size, size);
         if ((byGame.get(pick.game_pk) ?? 0) >= maxPerGame) continue;
         if ((byPlayer.get(pick.player_id) ?? 0) >= 1) continue;
         const family = marketFamily(pick.market);
-        if ((familyCount.get(family) ?? 0) >= 2) continue;
-        if (pick._edge < -0.04) continue;
+        if ((familyCount.get(family) ?? 0) >= MAX_PICKS_PER_FAMILY) continue;
+        if (pick._edge < MIN_PICK_EDGE) continue;
 
         byGame.set(pick.game_pk, (byGame.get(pick.game_pk) ?? 0) + 1);
         byPlayer.set(pick.player_id, (byPlayer.get(pick.player_id) ?? 0) + 1);
