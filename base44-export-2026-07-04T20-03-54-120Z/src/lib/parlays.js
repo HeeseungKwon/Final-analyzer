@@ -233,12 +233,12 @@ function marketFamily(market) {
 function impliedProbForPrediction(p) {
   const features = parseFeatures(p.features);
   const fallback = {
-    hit_2: 0.33,
-    total_bases: 0.53,
-    hrr_2: 0.56,
+    hit_2: 0.56,
+    total_bases: 0.54,
+    hrr_2: 0.55,
     hrr_3: 0.34,
-    home_run: 0.14,
-    strikeouts: 0.46,
+    home_run: 0.35,
+    strikeouts: 0.52,
   };
   return clamp(Number(features?.impliedMarketProb ?? fallback[p.market] ?? 0.545), 0.05, 0.95);
 }

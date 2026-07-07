@@ -9,12 +9,12 @@ const MIN_VALID_AMERICAN_ODDS = 50;
 const DEFAULT_FALLBACK_ODDS = -110;
 
 const DEFAULT_IMPLIED_PROBABILITIES = {
-  hit_2: 0.33,
-  total_bases: 0.53,
-  hrr_2: 0.56,
+  hit_2: 0.56,
+  total_bases: 0.54,
+  hrr_2: 0.55,
   hrr_3: 0.34,
-  home_run: 0.14,
-  strikeouts: 0.46,
+  home_run: 0.35,
+  strikeouts: 0.52,
 };
 
 const DEFAULT_MARKET_LINES = {
