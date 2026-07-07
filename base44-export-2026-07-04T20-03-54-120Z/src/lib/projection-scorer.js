@@ -1,276 +1,440 @@
 /**
- * Player Projection Score System
+ * Market-Specific Projection Score System
  * 
- * Extends the analyzer with:
- * - Expected Projections (mean values for Hits, TB, HR, Runs, RBI, HRR)
- * - Confidence Score (0-100) based on sample sizes and data quality
- * - Market Edge calculation (Model Prob - Market Prob)
- * - Projection Score (0-100) combining prob, projection, edge, and confidence
- * - Player Rankings by market
+ * Generates market-tailored projection scores with:
+ * - Market-specific weighting formulas (HR, Hits, TB, HRR)
+ * - Detailed confidence scoring (25% season, 10% recent, 10% split, etc.)
+ * - Edge normalization (+10%→100, +5%→75, 0%→50, negative scales down)
+ * - Market-specific statcast/contact/power metrics
+ * - Pool normalization (best→100, worst→0 per market/date)
+ * - Star rating system (⭐ to ⭐⭐⭐⭐⭐)
  * 
- * Integrates with existing scoring engine without modifying core architecture.
+ * Reuses existing analyzer outputs; no duplicate calculations.
  */
 
 import { clamp } from "@/lib/utils/math";
 
-// Confidence score weights (must sum to 1.0)
+// Confidence score component weights (must sum to 1.0)
 const CONFIDENCE_WEIGHTS = {
-  seasonSampleSize: 0.18,
-  recentSampleSize: 0.12,
-  handednessSampleSize: 0.10,
-  pitcherSampleSize: 0.08,
-  lineupConfirmed: 0.08,
-  parkFactor: 0.08,
-  weatherConditions: 0.06,
-  vegasImplied: 0.12,
-  statcastQuality: 0.18,
+  seasonSampleSize: 0.25,
+  recentSampleSize: 0.10,
+  splitSampleSize: 0.10,
+  pitcherSampleQuality: 0.10,
+  statcastQuality: 0.20,
+  confirmedLineup: 0.10,
+  weatherParkCertainty: 0.05,
+  vegasImpliedTotal: 0.05,
+  bullpenCertainty: 0.05,
+};
+
+// Market-specific projection score weights
+const MARKET_WEIGHTS = {
+  "1+ HR": {
+    modelProb: 0.35,
+    expectedValue: 0.30,
+    marketMetrics: 0.20, // Statcast power metrics
+    confidence: 0.10,
+    edge: 0.05,
+  },
+  "home_run": {
+    modelProb: 0.35,
+    expectedValue: 0.30,
+    marketMetrics: 0.20,
+    confidence: 0.10,
+    edge: 0.05,
+  },
+  "2+ Hits": {
+    modelProb: 0.35,
+    expectedValue: 0.30,
+    marketMetrics: 0.20, // Contact profile
+    confidence: 0.10,
+    edge: 0.05,
+  },
+  "2+ Total Bases": {
+    modelProb: 0.35,
+    expectedValue: 0.30,
+    marketMetrics: 0.20, // Power profile
+    confidence: 0.10,
+    edge: 0.05,
+  },
+  "3+ Total Bases": {
+    modelProb: 0.35,
+    expectedValue: 0.30,
+    marketMetrics: 0.20, // Power profile
+    confidence: 0.10,
+    edge: 0.05,
+  },
+  "hrr_2": {
+    modelProb: 0.30,
+    expectedValue: 0.30,
+    marketMetrics: 0.25, // Run production context
+    confidence: 0.10,
+    edge: 0.05,
+  },
+  "2+ HRR": {
+    modelProb: 0.30,
+    expectedValue: 0.30,
+    marketMetrics: 0.25, // Run production context
+    confidence: 0.10,
+    edge: 0.05,
+  },
+  "3+ HRR": {
+    modelProb: 0.30,
+    expectedValue: 0.30,
+    marketMetrics: 0.25, // Run production context
+    confidence: 0.10,
+    edge: 0.05,
+  },
+  "hrr_3": {
+    modelProb: 0.30,
+    expectedValue: 0.30,
+    marketMetrics: 0.25, // Run production context
+    confidence: 0.10,
+    edge: 0.05,
+  },
 };
 
 /**
- * Calculate expected (mean) projection for a stat based on simulation results
- * @param {number[]} simArray - Array of values from Monte Carlo simulation
- * @returns {number} Mean value
- */
-function calculateExpectedProjection(simArray) {
-  if (!simArray || simArray.length === 0) return 0;
-  const sum = simArray.reduce((a, b) => a + b, 0);
-  return sum / simArray.length;
-}
-
-/**
- * Calculate sample size credibility factor (0-1)
- * Uses logistic curve: 1 / (1 + exp(-slope * (n - inflection)))
+ * Sample size credibility using logistic curve
+ * Returns 0-1 where 1 = maximum credibility
  */
 function sampleSizeCredibility(n, inflectionPoint = 50, slope = 0.15) {
+  if (n <= 0) return 0;
   const x = n - inflectionPoint;
   return 1 / (1 + Math.exp(-slope * x));
 }
 
 /**
- * Build confidence score from multiple factors
- * Returns 0-100
+ * Calculate confidence score (0-100)
+ * Considers 9 components: season PA, recent PA, split quality, pitcher sample,
+ * statcast metrics, lineup confirmation, weather/park, Vegas total, bullpen
  */
-export function calculateConfidenceScore(ctx, dataQuality, simulation) {
-  let score = 50; // Base score
-  
-  // 1. Season sample size (max +15 points)
+export function calculateConfidenceScore(ctx, dataQuality, oppPitcherStats) {
+  let score = 0;
+
+  // 1. Season sample size (25%) - inflection at 200 PA
   const seasonPA = ctx.season?.pa ?? 0;
   const seasonCred = sampleSizeCredibility(seasonPA, 200, 0.1);
-  score += seasonCred * 15 * CONFIDENCE_WEIGHTS.seasonSampleSize / 0.18;
-  
-  // 2. Recent sample size (max +10 points)
+  score += seasonCred * 100 * CONFIDENCE_WEIGHTS.seasonSampleSize;
+
+  // 2. Recent sample size (10%) - inflection at 50 PA
   const recentPA = ctx.recent?.pa ?? 0;
   const recentCred = sampleSizeCredibility(recentPA, 50, 0.12);
-  score += recentCred * 10 * CONFIDENCE_WEIGHTS.recentSampleSize / 0.12;
-  
-  // 3. Handedness split (if available, max +8 points)
-  const hasHandednessSplit = ctx.season?.vs_rhp || ctx.season?.vs_lhp;
-  const handednessCred = hasHandednessSplit ? 0.8 : 0.3;
-  score += handednessCred * 8 * CONFIDENCE_WEIGHTS.handednessSampleSize / 0.10;
-  
-  // 4. Pitcher sample size (max +6 points)
-  const pitcherPA = ctx.oppPitcherStats?.bf ?? 0;
-  const pitcherCred = sampleSizeCredibility(pitcherPA, 300, 0.08);
-  score += pitcherCred * 6 * CONFIDENCE_WEIGHTS.pitcherSampleSize / 0.08;
-  
-  // 5. Lineup confirmed (max +6 points)
-  const lineupConfirmed = ctx.battingOrder ? 1.0 : 0.4;
-  score += lineupConfirmed * 6 * CONFIDENCE_WEIGHTS.lineupConfirmed / 0.08;
-  
-  // 6. Park factor (max +6 points) - neutral = 100, extreme = 80-120
-  const parkFactorNormalized = Math.max(0, 1 - Math.abs(ctx.parkFactor - 100) / 100);
-  score += parkFactorNormalized * 6 * CONFIDENCE_WEIGHTS.parkFactor / 0.08;
-  
-  // 7. Weather conditions (max +4 points) - we assume neutral if not specified
-  const weatherScore = ctx.weatherAdjustment ? 0.8 : 0.5;
-  score += weatherScore * 4 * CONFIDENCE_WEIGHTS.weatherConditions / 0.06;
-  
-  // 8. Vegas implied team total (max +9 points)
-  const impliedTotal = ctx.teamImpliedTotal ?? 4.5;
-  const vegasNormalized = Math.max(0, 1 - Math.abs(impliedTotal - 4.5) / 2.5);
-  score += vegasNormalized * 9 * CONFIDENCE_WEIGHTS.vegasImplied / 0.12;
-  
-  // 9. Statcast quality metrics (max +14 points)
-  // Higher barrel%, hard hit%, and consistent exit velo = higher confidence
+  score += recentCred * 100 * CONFIDENCE_WEIGHTS.recentSampleSize;
+
+  // 3. Split sample size (10%) - do we have good vs handedness splits?
+  const hasGoodSplits = (ctx.season?.vs_rhp?.pa ?? 0) >= 30 && (ctx.season?.vs_lhp?.pa ?? 0) >= 30;
+  const splitCred = hasGoodSplits ? 0.95 : (ctx.season?.pa ?? 0) > 100 ? 0.6 : 0.3;
+  score += splitCred * 100 * CONFIDENCE_WEIGHTS.splitSampleSize;
+
+  // 4. Pitcher sample quality (10%) - inflection at 300 BF
+  const pitcherBF = oppPitcherStats?.bf ?? 0;
+  const pitcherCred = sampleSizeCredibility(pitcherBF, 300, 0.08);
+  score += pitcherCred * 100 * CONFIDENCE_WEIGHTS.pitcherSampleQuality;
+
+  // 5. Statcast quality (20%) - barrel%, hard hit%, exit velo consistency
   const barrelPct = ctx.statcastMetrics?.barrel_pct ?? 0.05;
   const hardHitPct = ctx.statcastMetrics?.hard_hit_pct ?? 0.35;
-  const exitVeloConsistency = ctx.statcastMetrics?.exit_velo_consistency ?? 0.5;
-  
+  const babip = ctx.season?.babip ?? 0.3;
   const statcastScore = (
-    Math.min(barrelPct / 0.10, 1) * 0.4 +
-    Math.min(hardHitPct / 0.50, 1) * 0.4 +
-    exitVeloConsistency * 0.2
-  );
-  score += statcastScore * 14 * CONFIDENCE_WEIGHTS.statcastQuality / 0.18;
-  
-  // Data quality adjustment
-  if (dataQuality === "missing") score *= 0.5;
-  else if (dataQuality === "partial") score *= 0.8;
-  
+    Math.min(barrelPct / 0.12, 1) * 0.35 +
+    Math.min(hardHitPct / 0.50, 1) * 0.35 +
+    Math.min(Math.abs(babip - 0.3) / 0.05, 1) * 0.30
+  ) * 100;
+  score += statcastScore * CONFIDENCE_WEIGHTS.statcastQuality;
+
+  // 6. Confirmed lineup (10%)
+  const lineupConfirmed = ctx.battingOrder ? 1.0 : 0.5;
+  score += lineupConfirmed * 100 * CONFIDENCE_WEIGHTS.confirmedLineup;
+
+  // 7. Weather & park certainty (5%)
+  const weatherAdjustment = Math.abs(ctx.weatherAdjustment ?? 0);
+  const weatherCertainty = 1 - Math.min(weatherAdjustment / 0.15, 1); // More extreme weather = less certainty
+  const parkFactor = ctx.parkFactor ?? 100;
+  const parkCertainty = 1 - Math.abs(parkFactor - 100) / 200; // Extreme parks = less certainty
+  const weatherParkScore = ((weatherCertainty + parkCertainty) / 2) * 100;
+  score += weatherParkScore * CONFIDENCE_WEIGHTS.weatherParkCertainty;
+
+  // 8. Vegas implied total (5%) - extremes indicate less certainty
+  const vegasImplied = ctx.teamImpliedTotal ?? 4.5;
+  const vegasCertainty = 1 - Math.min(Math.abs(vegasImplied - 4.5) / 2, 1);
+  score += vegasCertainty * 100 * CONFIDENCE_WEIGHTS.vegasImpliedTotal;
+
+  // 9. Bullpen certainty (5%) - quality of team's bullpen matters for HR/RBI projections
+  const oppBullpenERA = ctx.oppBullpenStats?.era ?? 4.0;
+  const bullpenCertainty = 1 - Math.min(Math.abs(oppBullpenERA - 3.5) / 2, 1);
+  score += bullpenCertainty * 100 * CONFIDENCE_WEIGHTS.bullpenCertainty;
+
+  // Apply data quality multiplier
+  const qualityMultipliers = {
+    missing: 0.5,
+    partial: 0.8,
+    ok: 1.0,
+  };
+  const multiplier = qualityMultipliers[dataQuality] ?? 1.0;
+  score *= multiplier;
+
   return clamp(score, 0, 100);
 }
 
 /**
- * Calculate market edge: Model Probability - Market Implied Probability
- * Returns -1 to +1 (can be displayed as -100 to +100 in percentages)
+ * Normalize edge to 0-100 score
+ * +10% → 100, +5% → 75, 0% → 50, -5% → 25, etc.
+ * Linear: edge_decimal / 0.1 * 50 + 50
  */
-export function calculateMarketEdge(modelProb, marketProb) {
-  if (marketProb == null) return 0;
-  return clamp(modelProb - marketProb, -1, 1);
-}
-
-/**
- * Extract or calculate expected projections from simulation
- */
-export function extractProjectedStats(simulation) {
-  if (!simulation) {
-    return {
-      expectedHits: 0,
-      expectedTotalBases: 0,
-      expectedHomeRuns: 0,
-      expectedRuns: 0,
-      expectedRBI: 0,
-      expectedHRR: 0,
-    };
+export function calculateEdgeScore(edgeDecimal) {
+  if (edgeDecimal === null || edgeDecimal === undefined) {
+    return 50; // Neutral if no edge data
   }
-  
+  // Linear scale
+  return clamp(50 + (edgeDecimal / 0.1) * 50, 0, 100);
+}
+
+/**
+ * Normalize a score component relative to today's slate
+ * slateMin/slateMax: min/max values in today's player pool
+ */
+export function normalizeToSlate(value, slateMin, slateMax) {
+  if (slateMax === slateMin) return 50; // If all same, neutral
+  return clamp(((value - slateMin) / (slateMax - slateMin)) * 100, 0, 100);
+}
+
+/**
+ * Extract mean (expected) values from Monte Carlo simulation
+ */
+export function extractProjectedStats(simulationData) {
+  const mean = (arr) => {
+    if (!arr || arr.length === 0) return 0;
+    return arr.reduce((a, b) => a + b, 0) / arr.length;
+  };
+
   return {
-    expectedHits: calculateExpectedProjection(simulation.hits),
-    expectedTotalBases: calculateExpectedProjection(simulation.totalBases),
-    expectedHomeRuns: calculateExpectedProjection(simulation.homeRuns),
-    expectedRuns: calculateExpectedProjection(simulation.runs),
-    expectedRBI: calculateExpectedProjection(simulation.rbi),
-    expectedHRR: calculateExpectedProjection(simulation.hrr),
+    expectedHits: mean(simulationData?.hits ?? []),
+    expectedTotalBases: mean(simulationData?.totalBases ?? []),
+    expectedHomeRuns: mean(simulationData?.homeRuns ?? []),
+    expectedRuns: mean(simulationData?.runs ?? []),
+    expectedRBI: mean(simulationData?.rbi ?? []),
+    expectedHRR: mean(simulationData?.hrr ?? []),
   };
 }
 
 /**
- * Calculate Projection Score (0-100) combining:
- * - Model Probability (40%)
- * - Expected Projection aligned with market (30%)
- * - Market Edge (20%)
- * - Confidence Score (10%)
+ * Calculate statcast power metrics score (for HR markets)
+ * Returns 0-100
  */
-export function calculateProjectionScore(
-  modelProb,
-  expectedProjection,
-  marketThreshold,
-  marketEdge,
-  confidenceScore,
-  weights = { prob: 0.40, projection: 0.30, edge: 0.20, confidence: 0.10 }
+function calculatePowerMetricsScore(ctx) {
+  const barrelPct = ctx.statcastMetrics?.barrel_pct ?? 0.05;
+  const hardHitPct = ctx.statcastMetrics?.hard_hit_pct ?? 0.35;
+  const exitVelo = ctx.statcastMetrics?.avg_exit_velo ?? 85;
+  const fbRate = ctx.statcastMetrics?.fly_ball_rate ?? 0.35;
+  const hrfb = ctx.statcastMetrics?.hr_fb_rate ?? 0.10;
+
+  const barrelScore = Math.min(barrelPct / 0.12, 1) * 20;
+  const hardHitScore = Math.min(hardHitPct / 0.50, 1) * 20;
+  const exitVeloScore = Math.min(exitVelo / 92, 1) * 20;
+  const fbRateScore = Math.min(fbRate / 0.45, 1) * 20;
+  const hrfbScore = Math.min(hrfb / 0.15, 1) * 20;
+
+  return barrelScore + hardHitScore + exitVeloScore + fbRateScore + hrfbScore;
+}
+
+/**
+ * Calculate contact profile score (for Hits markets)
+ * Returns 0-100
+ */
+function calculateContactProfileScore(ctx) {
+  const strikeoutRate = ctx.season?.strikeout_rate ?? 0.20;
+  const contactRate = ctx.season?.contact_rate ?? 0.80;
+  const battingAvg = ctx.season?.batting_avg ?? 0.250;
+  const xBA = ctx.season?.xba ?? 0.300;
+  const babip = ctx.season?.babip ?? 0.300;
+  const expectedPA = ctx.expectedPA ?? 3.5;
+
+  const kScore = Math.min((1 - strikeoutRate) / 0.80, 1) * 20;
+  const contactScore = Math.min(contactRate / 1.0, 1) * 20;
+  const avgScore = Math.min(battingAvg / 0.300, 1) * 20;
+  const xbaScore = Math.min(xBA / 0.330, 1) * 20;
+  const paScore = Math.min(expectedPA / 4.5, 1) * 20;
+
+  return kScore + contactScore + avgScore + xbaScore + paScore;
+}
+
+/**
+ * Calculate power profile score (for TB markets)
+ * Returns 0-100
+ */
+function calculatePowerProfileScore(ctx) {
+  const iso = ctx.season?.iso ?? 0.150;
+  const xslg = ctx.season?.xslug ?? 0.370;
+  const barrelPct = ctx.statcastMetrics?.barrel_pct ?? 0.05;
+  const hardHitPct = ctx.statcastMetrics?.hard_hit_pct ?? 0.35;
+  const linedriveRate = ctx.statcastMetrics?.line_drive_rate ?? 0.20;
+
+  const isoScore = Math.min(iso / 0.200, 1) * 20;
+  const xslgScore = Math.min(xslg / 0.450, 1) * 20;
+  const barrelScore = Math.min(barrelPct / 0.12, 1) * 20;
+  const hardHitScore = Math.min(hardHitPct / 0.50, 1) * 20;
+  const ldScore = Math.min(linedriveRate / 0.30, 1) * 20;
+
+  return isoScore + xslgScore + barrelScore + hardHitScore + ldScore;
+}
+
+/**
+ * Calculate run production context score (for HRR markets)
+ * Returns 0-100
+ */
+function calculateRunProductionContextScore(ctx, team) {
+  const expectedPA = ctx.expectedPA ?? 3.5;
+  const battingOrder = ctx.battingOrder ?? 8;
+  const teamImpliedRuns = team?.impliedRuns ?? 4.5;
+  const obpAhead = team?.obpAhead ?? 0.320;
+  const obpBehind = team?.obpBehind ?? 0.310;
+
+  // Lineups better for run production
+  const orderScore = (1 - Math.min(battingOrder / 9, 1)) * 25;
+  const paScore = Math.min(expectedPA / 4.5, 1) * 25;
+  const runsScore = Math.min(teamImpliedRuns / 5.5, 1) * 25;
+  const obpScore = ((obpAhead + obpBehind) / 2 / 0.340) * 25;
+
+  return orderScore + paScore + runsScore + obpScore;
+}
+
+/**
+ * Calculate market-specific projection score (0-100)
+ */
+export function calculateMarketProjectionScore(
+  prediction,
+  simulationData,
+  ctx,
+  oppPitcherStats,
+  market,
+  oppTeamStats,
+  slateNorms
 ) {
-  // Normalize model probability to 0-100
-  const probComponent = modelProb * 100;
-  
-  // Projection component: measure how far above/below threshold
-  // If threshold is 2 hits, and expected is 2.5, that's +0.5 advantage
-  const projectionDelta = expectedProjection - marketThreshold;
-  const projectionComponent = 50 + Math.min(50, Math.max(-50, projectionDelta * 30));
-  
-  // Edge component: normalized to 0-100
-  const edgeComponent = 50 + (marketEdge * 100);
-  
-  // Confidence component: already 0-100
-  const confidenceComponent = confidenceScore;
-  
-  // Weighted combination
-  const score = 
-    probComponent * weights.prob +
-    projectionComponent * weights.projection +
-    edgeComponent * weights.edge +
-    confidenceComponent * weights.confidence;
-  
-  return clamp(score, 0, 100);
+  const weights = MARKET_WEIGHTS[market] || MARKET_WEIGHTS["2+ Hits"];
+
+  // Get base metrics
+  const modelProbScore = clamp(Number(prediction.projection ?? 0.5) * 100, 0, 100);
+  const projectedStats = extractProjectedStats(simulationData);
+
+  // Normalize expected value to slate
+  let expectedValueScore = 50;
+  if (market.includes("HR") || market === "home_run" || market === "1+ HR") {
+    expectedValueScore = normalizeToSlate(
+      projectedStats.expectedHomeRuns,
+      slateNorms?.minHR ?? 0,
+      slateNorms?.maxHR ?? 2.5
+    );
+  } else if (market.includes("3+ Total")) {
+    expectedValueScore = normalizeToSlate(
+      projectedStats.expectedTotalBases,
+      slateNorms?.minTB3 ?? 0,
+      slateNorms?.maxTB3 ?? 4
+    );
+  } else if (market.includes("2+ Total")) {
+    expectedValueScore = normalizeToSlate(
+      projectedStats.expectedTotalBases,
+      slateNorms?.minTB2 ?? 0,
+      slateNorms?.maxTB2 ?? 3
+    );
+  } else if (market.includes("HRR") || market.includes("hrr")) {
+    expectedValueScore = normalizeToSlate(
+      projectedStats.expectedHRR,
+      slateNorms?.minHRR ?? 0,
+      slateNorms?.maxHRR ?? 2.5
+    );
+  } else {
+    // Hits markets
+    expectedValueScore = normalizeToSlate(
+      projectedStats.expectedHits,
+      slateNorms?.minHits ?? 0,
+      slateNorms?.maxHits ?? 2.5
+    );
+  }
+
+  // Calculate market-specific metrics
+  let metricsScore = 50;
+  if (market.includes("HR") || market === "home_run" || market === "1+ HR") {
+    metricsScore = calculatePowerMetricsScore(ctx);
+  } else if (market.includes("HRR") || market.includes("hrr")) {
+    metricsScore = calculateRunProductionContextScore(ctx, oppTeamStats);
+  } else if (market.includes("Total")) {
+    metricsScore = calculatePowerProfileScore(ctx);
+  } else {
+    // Hits markets
+    metricsScore = calculateContactProfileScore(ctx);
+  }
+
+  // Get confidence and edge scores
+  const confidenceScore = calculateConfidenceScore(ctx, prediction.data_quality, oppPitcherStats);
+  const edgeScore = calculateEdgeScore(prediction.market_edge);
+
+  // Weighted synthesis
+  const projectionScore =
+    modelProbScore * weights.modelProb +
+    expectedValueScore * weights.expectedValue +
+    metricsScore * weights.marketMetrics +
+    confidenceScore * weights.confidence +
+    edgeScore * weights.edge;
+
+  return clamp(projectionScore, 0, 100);
 }
 
 /**
- * Build enriched prediction with projection data
- * Augments existing prediction row with new scoring fields
+ * Generate star rating from projection score
+ * 95-100 → ⭐⭐⭐⭐⭐ Elite
+ * 90-94 → ⭐⭐⭐⭐⭐ Strong
+ * 85-89 → ⭐⭐⭐⭐ Excellent
+ * 80-84 → ⭐⭐⭐⭐ Good
+ * 75-79 → ⭐⭐⭐ Value
+ * 70-74 → ⭐⭐⭐ Lean
+ * <70 → Pass
  */
-export function enrichPredictionWithProjections(prediction, ctx, simulation, marketProbs, dataQuality) {
-  const projectedStats = extractProjectedStats(simulation);
-  const confidenceScore = calculateConfidenceScore(ctx, dataQuality, simulation);
-  
-  // Determine market threshold based on market type
-  let marketThreshold = 2;
-  if (prediction.market === "2+ Hits") marketThreshold = 2;
-  else if (prediction.market === "2+ Total Bases") marketThreshold = 2;
-  else if (prediction.market === "3+ Total Bases") marketThreshold = 3;
-  else if (prediction.market === "1+ HR" || prediction.market === "home_run") marketThreshold = 1;
-  else if (prediction.market === "2+ HRR" || prediction.market === "hrr_2") marketThreshold = 2;
-  else if (prediction.market === "3+ HRR" || prediction.market === "hrr_3") marketThreshold = 3;
-  
-  // Get model probability
-  const modelProb = marketProbs?.[prediction.market] ?? 0;
-  
-  // Calculate market edge (using prediction.projected_odds if available to derive market prob)
-  const marketProb = prediction.implied_market_prob ?? null;
-  const edge = calculateMarketEdge(modelProb, marketProb);
-  
-  // Calculate projection score
-  const projectionScore = calculateProjectionScore(
-    modelProb,
-    prediction.market === "1+ HR" || prediction.market === "home_run"
-      ? projectedStats.expectedHomeRuns
-      : prediction.market === "2+ HRR" || prediction.market === "hrr_2"
-        ? projectedStats.expectedHRR
-        : prediction.market === "3+ HRR" || prediction.market === "hrr_3"
-          ? projectedStats.expectedHRR
-          : prediction.market === "2+ Hits"
-            ? projectedStats.expectedHits
-            : prediction.market === "2+ Total Bases"
-              ? projectedStats.expectedTotalBases
-              : prediction.market === "3+ Total Bases"
-                ? projectedStats.expectedTotalBases
-                : 0,
-    marketThreshold,
-    edge,
-    confidenceScore
-  );
-  
-  return {
-    ...prediction,
-    // Projected stats
-    expected_hits: Math.round(projectedStats.expectedHits * 100) / 100,
-    expected_total_bases: Math.round(projectedStats.expectedTotalBases * 100) / 100,
-    expected_home_runs: Math.round(projectedStats.expectedHomeRuns * 100) / 100,
-    expected_runs: Math.round(projectedStats.expectedRuns * 100) / 100,
-    expected_rbi: Math.round(projectedStats.expectedRBI * 100) / 100,
-    expected_hrr: Math.round(projectedStats.expectedHRR * 100) / 100,
-    // Confidence and scoring
-    confidence_score: Math.round(confidenceScore * 100) / 100,
-    market_edge: Math.round(edge * 10000) / 10000,
-    projection_score: Math.round(projectionScore * 100) / 100,
-  };
+export function getPlayerRating(projectionScore) {
+  if (projectionScore >= 95) return { stars: 5, label: "Elite Play" };
+  if (projectionScore >= 90) return { stars: 5, label: "Strong Play" };
+  if (projectionScore >= 85) return { stars: 4, label: "Excellent" };
+  if (projectionScore >= 80) return { stars: 4, label: "Good" };
+  if (projectionScore >= 75) return { stars: 3, label: "Value Play" };
+  if (projectionScore >= 70) return { stars: 3, label: "Lean" };
+  return { stars: 0, label: "Pass" };
 }
 
 /**
- * Rank players by market
- * Returns players sorted by projection_score descending
+ * Rank players by market with projection scores
  */
 export function rankPlayersByMarket(predictions, market) {
-  return predictions
-    .filter(p => p.market === market && p.projection_score != null)
-    .sort((a, b) => (b.projection_score - a.projection_score))
-    .map((p, index) => ({ ...p, rank: index + 1 }));
+  const filtered = predictions.filter(
+    (p) =>
+      p.market === market &&
+      p.projection_score != null &&
+      p.expected_hits != null
+  );
+
+  const ranked = filtered
+    .sort((a, b) => (b.projection_score ?? 0) - (a.projection_score ?? 0))
+    .map((p, idx) => ({
+      ...p,
+      rank: idx + 1,
+      rating: getPlayerRating(p.projection_score),
+    }));
+
+  return ranked;
 }
 
 /**
- * Get rankings for all markets
+ * Get all market rankings
  */
 export function getAllMarketRankings(predictions) {
   const markets = [
+    "1+ HR",
     "2+ Hits",
     "2+ Total Bases",
     "3+ Total Bases",
-    "1+ HR",
-    "home_run",
-    "2+ HRR",
-    "3+ HRR",
     "hrr_2",
-    "hrr_3",
+    "2+ HRR",
   ];
-  
+
   const rankings = {};
   for (const market of markets) {
     const ranked = rankPlayersByMarket(predictions, market);
@@ -278,26 +442,80 @@ export function getAllMarketRankings(predictions) {
       rankings[market] = ranked;
     }
   }
-  
+
   return rankings;
 }
 
 /**
- * Summary statistics for a set of predictions
+ * Get summary stats for a market
  */
 export function getProjectionSummary(predictions, market) {
-  const marketPreds = predictions.filter(p => p.market === market);
-  if (marketPreds.length === 0) return null;
-  
-  const scores = marketPreds.map(p => p.projection_score ?? 0);
-  const edges = marketPreds.map(p => p.market_edge ?? 0);
-  
+  const filtered = predictions.filter(
+    (p) => p.market === market && p.projection_score != null
+  );
+
+  if (filtered.length === 0) return null;
+
+  const scores = filtered.map((p) => p.projection_score);
+  const edges = filtered.map((p) => p.market_edge ?? 0);
+
+  const topScore = Math.max(...scores);
+  const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+  const avgEdge = edges.reduce((a, b) => a + b, 0) / edges.length;
+  const positiveedgeCount = edges.filter((e) => e > 0).length;
+
   return {
     market,
-    count: marketPreds.length,
-    topScore: Math.max(...scores),
-    avgScore: scores.reduce((a, b) => a + b, 0) / scores.length,
-    avgEdge: edges.reduce((a, b) => a + b, 0) / edges.length,
-    positiveedgeCount: edges.filter(e => e > 0).length,
+    count: filtered.length,
+    topScore,
+    avgScore,
+    avgEdge,
+    positiveedgeCount,
   };
+}
+
+/**
+ * Enrich prediction with all projection metrics
+ * Returns prediction with added fields for display/export
+ */
+export function enrichPredictionWithProjections(
+  prediction,
+  simulationData,
+  ctx,
+  oppPitcherStats,
+  market,
+  oppTeamStats,
+  slateNorms
+) {
+  try {
+    const projectedStats = extractProjectedStats(simulationData);
+    const confidence = calculateConfidenceScore(ctx, prediction.data_quality, oppPitcherStats);
+    const projectionScore = calculateMarketProjectionScore(
+      prediction,
+      simulationData,
+      ctx,
+      oppPitcherStats,
+      market,
+      oppTeamStats,
+      slateNorms
+    );
+    const rating = getPlayerRating(projectionScore);
+
+    return {
+      ...prediction,
+      expected_hits: projectedStats.expectedHits,
+      expected_total_bases: projectedStats.expectedTotalBases,
+      expected_home_runs: projectedStats.expectedHomeRuns,
+      expected_runs: projectedStats.expectedRuns,
+      expected_rbi: projectedStats.expectedRBI,
+      expected_hrr: projectedStats.expectedHRR,
+      confidence_score: confidence,
+      projection_score: projectionScore,
+      player_rating: rating.label,
+      player_stars: rating.stars,
+    };
+  } catch (err) {
+    console.error("Error enriching prediction with projections:", err);
+    return prediction; // Return base prediction if enrichment fails
+  }
 }
