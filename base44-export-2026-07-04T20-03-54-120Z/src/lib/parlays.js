@@ -317,7 +317,10 @@ export function buildParlays(predictions, selectedGamePks) {
 
     // 4-Leg A — safer profile markets, with adaptive per-game limit
     const maxA = adaptiveMax(4);
-    const legProbFloor = 0.46; // slightly relaxed to accommodate smaller slates
+    // LEG_PROB_FLOOR: slightly relaxed vs the legacy 0.48 to include more picks
+    // when a small number of games are selected (fewer candidates available).
+    // 0.46 ≈ 46% leg probability, still above the breakeven for -120 juice (~0.45).
+    const legProbFloor = 0.46;
     const candsA = ranked.filter(
       (p) => ["hit_2", "hrr_2", "hrr_3", "strikeouts", "total_bases"].includes(p.market) && p._legProb >= legProbFloor
     );
@@ -390,11 +393,13 @@ export function buildParlays(predictions, selectedGamePks) {
     // This triggers when strict 4/5-leg assembly produced nothing but there are
     // still ≥2 eligible picks in the selected games.
     if (parlays.length === 0 && ranked.length >= 2) {
-      // Relaxed pool: lower legProb floor, allow more per game
+      // Relaxed pool: no additional legProb floor applied beyond what rankPool
+      // already guarantees (data_quality filter only).  This intentionally
+      // allows picks that failed the 0.46 floor above — the goal here is to
+      // guarantee at least one parlay is returned when the user selected games.
       const maxFallback = adaptiveMax(2);
-      const relaxedCands = ranked; // all ranked picks (no legProb floor)
       const fallbackLegs = pickTierMix(
-        relaxedCands, 2,
+        ranked, 2,
         [{ tier: "s", count: 1 }, { tier: "a", count: 1 }, { tier: "b", count: 1 }, { tier: "c", count: 1 }],
         { maxPerGame: maxFallback, maxPerPlayer: 1 }
       );

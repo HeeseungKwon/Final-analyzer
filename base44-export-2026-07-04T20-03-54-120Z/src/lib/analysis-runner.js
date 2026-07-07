@@ -247,9 +247,21 @@ function rebalanceRecommendations(rows) {
  * cause random ordering across runs.
  */
 function topUpRecommendations(rows) {
+  // Minimum recommended picks to guarantee per analysis run.
   const MIN_DAILY_PICKS = 50;
-  const TOPUP_MIN_CONFIDENCE = 42; // relaxed gate for top-up candidates
-  const HIGH_CONF_THRESHOLD = 78;  // rec_score threshold for automatic overflow inclusion
+
+  // Relaxed confidence gate for top-up candidates (vs primary gate of 55–58).
+  // Set at 42 to capture near-miss picks that are slightly below the primary
+  // MARKET_MIN_CONFIDENCE thresholds (55–58) but still represent real signal.
+  // Picks at this level are treated as "honorable mentions" that only appear
+  // when the primary selection falls short of the 50-pick minimum.
+  const TOPUP_MIN_CONFIDENCE = 42;
+
+  // rec_score threshold for automatic overflow above MIN_DAILY_PICKS.
+  // 78 was chosen to sit between the grade-A boundary (72) and grade-S boundary
+  // (85) in pickGrade.js, capturing picks the model is highly confident in
+  // without opening the floodgates to all grade-A picks on large slates.
+  const HIGH_CONF_THRESHOLD = 78;
 
   // Only operate on non-final (non-"missing" quality) rows that are not yet recommended.
   const notYetRec = rows
