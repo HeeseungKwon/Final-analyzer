@@ -6,7 +6,10 @@ import {
   fetchSchedule,
   fetchHitterStats,
   fetchHitterRecent,
+  fetchHitterSplitVsHand,
+  fetchPitcherHand,
   fetchPitcherStats,
+  fetchTeamHittingStats,
   fetchTeamHittingSO,
   fetchGameLineup,
   currentMlbSeason,
@@ -452,6 +455,27 @@ export async function runAnalysis(dateArg, onProgress) {
     return teamHitK.get(id);
   }
 
+  // Team hitting stats (OBP + runs/game) — used for onbaseRateAhead/Behind and teamImpliedTotal proxy
+  const teamHittingCache = new Map();
+  async function getTeamHitting(id) {
+    if (!teamHittingCache.has(id)) {
+      const r = await fetchTeamHittingStats(id, season);
+      teamHittingCache.set(id, r ?? { obp: 0.320, runsPerGame: 4.5 });
+    }
+    return teamHittingCache.get(id);
+  }
+
+  // Pitcher throwing-hand cache
+  const pitcherHandCache = new Map();
+  async function getOppPitcherHand(pid) {
+    if (!pid) return null;
+    if (!pitcherHandCache.has(pid)) {
+      const h = await fetchPitcherHand(pid);
+      pitcherHandCache.set(pid, h ?? null);
+    }
+    return pitcherHandCache.get(pid);
+  }
+
   const pitcherStatCache = new Map();
   async function getSPStats(pid) {
     if (!pid) return null;
@@ -485,7 +509,11 @@ export async function runAnalysis(dateArg, onProgress) {
         continue;
       }
 
-      const oppSPStats = await getSPStats(oppSP);
+      const [oppSPStats, oppSPHand, teamStats] = await Promise.all([
+        getSPStats(oppSP),
+        getOppPitcherHand(oppSP),
+        getTeamHitting(teamId),
+      ]);
       const oppSPk = oppSPStats?.k_percent ?? null;
       const oppSPhrPerBF = oppSPStats && (oppSPStats.bf ?? 0) > 0
         ? (oppSPStats.hr_allowed ?? 0) / oppSPStats.bf
@@ -493,9 +521,10 @@ export async function runAnalysis(dateArg, onProgress) {
 
       for (const lp of lineupPlayers) {
         try {
-          const [seasonStats, recent] = await Promise.all([
+          const [seasonStats, recent, splitStats] = await Promise.all([
             fetchHitterStats(lp.id, season),
             fetchHitterRecent(lp.id, season, 15),
+            fetchHitterSplitVsHand(lp.id, season, oppSPHand),
           ]);
           if (!seasonStats && !recent) {
             excludedRows.push({ game_date: date, player_id: lp.id, player_name: lp.fullName, reason: "No hitting stats available" });
@@ -505,6 +534,7 @@ export async function runAnalysis(dateArg, onProgress) {
           const baseCtx = {
             season: seasonStats,
             recent,
+            split: splitStats,
             oppPitcherK: oppSPk,
             oppPitcherHrPerBF: oppSPhrPerBF,
             oppPitcherGbFbRatio: oppSPStats?.gb_fb_ratio ?? null,
@@ -512,9 +542,11 @@ export async function runAnalysis(dateArg, onProgress) {
             expectedPA: expectedPAForBattingOrder(lp.battingOrder),
             battingOrder: lp.battingOrder,
             parkFactor: parkFactorFor(g.home_team_id),
-            teamImpliedTotal: null,
-            onbaseRateAhead: null,
-            onbaseRateBehind: null,
+            // Team's season R/G used as proxy for run-scoring environment
+            teamImpliedTotal: teamStats?.runsPerGame ?? 4.5,
+            // Team OBP used as proxy for runners-on-base context ahead/behind
+            onbaseRateAhead: teamStats?.obp ?? 0.320,
+            onbaseRateBehind: teamStats?.obp ?? 0.320,
             vegasHrProb: null,
           };
 
