@@ -34,6 +34,7 @@ const MARKET_TERMS = {
 };
 
 const payloadCache = new Map();
+const oddsResultCache = new Map();
 
 function normalizeText(value) {
   return String(value ?? "")
@@ -200,10 +201,9 @@ function collectOddsCandidates(node, results = []) {
   return results;
 }
 
-function candidateScore(candidate, market, playerName) {
+function candidateScore(candidate, market, playerTerms) {
   const text = candidate.text;
   const expectedLine = DEFAULT_MARKET_LINES[market];
-  const playerTerms = normalizeText(playerName).split(" ").filter(Boolean);
   const marketTerms = MARKET_TERMS[market] ?? [];
 
   let score = 0;
@@ -222,6 +222,12 @@ function candidateScore(candidate, market, playerName) {
 }
 
 export async function fetchRealtimeOdds(gamePk, market, playerName) {
+  const cacheKey = `${gamePk}:${market}:${normalizeText(playerName)}`;
+  const cached = oddsResultCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
   const fallback = buildFallbackOdds(market);
 
   if (!gamePk || !market || !playerName) {
@@ -234,11 +240,12 @@ export async function fetchRealtimeOdds(gamePk, market, playerName) {
 
     const candidates = collectOddsCandidates(response.payload);
     if (candidates.length === 0) return fallback;
+    const playerTerms = normalizeText(playerName).split(" ").filter(Boolean);
 
     const best = candidates
       .map((candidate) => ({
         ...candidate,
-        score: candidateScore(candidate, market, playerName),
+        score: candidateScore(candidate, market, playerTerms),
       }))
       .filter((candidate) => candidate.score >= MIN_CANDIDATE_SCORE)
       .sort((a, b) => b.score - a.score)[0];
@@ -248,7 +255,7 @@ export async function fetchRealtimeOdds(gamePk, market, playerName) {
     const impliedProbability = convertAmericanToImplied(best.marketOdds);
     if (!Number.isFinite(impliedProbability)) return fallback;
 
-    return {
+    const value = {
       marketOdds: best.marketOdds,
       impliedProbability,
       marketLine: best.marketLine ?? fallback.marketLine,
@@ -256,6 +263,11 @@ export async function fetchRealtimeOdds(gamePk, market, playerName) {
       provider: best.provider,
       fallbackUsed: false,
     };
+    oddsResultCache.set(cacheKey, {
+      value,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+    });
+    return value;
   } catch {
     return fallback;
   }

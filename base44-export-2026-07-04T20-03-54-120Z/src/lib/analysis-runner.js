@@ -70,6 +70,8 @@ function pruneRedundantRecommendations() {
 function topUpRecommendations(rows) {
   // Legacy top-up logic forced a minimum pick count. The redesigned engine keeps
   // recommendations strict: only +5% edge plays stay recommended.
+  // TODO: remove this compatibility hook once all callers stop depending on the
+  // legacy recommendation pipeline shape.
   return rows;
 }
 

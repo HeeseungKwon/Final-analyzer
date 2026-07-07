@@ -479,6 +479,8 @@ export function scorePitcherV2(name, ctx) {
 
 function inferModelProbability({ market, projection, floor, ceiling, marketLine }) {
   const projectedValue = Number(projection);
+  // Non-strikeout markets already emit over-line probabilities from the Monte
+  // Carlo engine, so values in [0, 1] can be used directly as modelProb.
   if (Number.isFinite(projectedValue) && projectedValue >= 0 && projectedValue <= 1 && market !== STRIKEOUT_MARKET) {
     return clamp(projectedValue, 0, 1);
   }
