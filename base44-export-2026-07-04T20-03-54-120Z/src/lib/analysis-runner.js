@@ -551,24 +551,42 @@ export async function runAnalysis(dateArg, onProgress) {
               verdict_note: s.verdictNote ?? "",
             };
             
-            // Enrich with projection scores if simulation data available
+            // Enrich with market-specific projection scores
             if (simulationData) {
               try {
+                const oppPitcherStats = {
+                  bf: oppSP?.bf ?? 0,
+                  k: oppSPk ?? 0,
+                  era: oppSP?.era ?? 4.0,
+                };
+                const oppTeamStats = {
+                  impliedRuns: baseCtx.teamImpliedTotal ?? 4.5,
+                  obpAhead: baseCtx.onbaseRateAhead ?? 0.320,
+                  obpBehind: baseCtx.onbaseRateBehind ?? 0.310,
+                };
+                // Calculate slate norms based on today's data (simplified)
+                const slateNorms = {
+                  minHR: 0, maxHR: 2.5,
+                  minHits: 0, maxHits: 2.5,
+                  minTB2: 0, maxTB2: 3,
+                  minTB3: 0, maxTB3: 4,
+                  minHRR: 0, maxHRR: 2.5,
+                };
+                
                 const enriched = enrichPredictionWithProjections(
                   predRow,
-                  baseCtx,
                   simulationData,
-                  {
-                    "hit_2": s.market === "hit_2" ? s.projection : null,
-                    "total_bases": s.market === "total_bases" ? s.projection : null,
-                    "hrr_2": s.market === "hrr_2" ? s.projection : null,
-                    "hrr_3": s.market === "hrr_3" ? s.projection : null,
-                    "home_run": s.market === "home_run" ? s.projection : null,
-                  },
-                  s.dataQuality
+                  baseCtx,
+                  oppPitcherStats,
+                  s.market,
+                  oppTeamStats,
+                  slateNorms
                 );
                 predRow = enriched;
-              } catch {}
+              } catch (err) {
+                // Enrichment failed but base prediction still valid
+                console.error("Projection enrichment error:", err);
+              }
             }
             
             predictionRows.push(predRow);
