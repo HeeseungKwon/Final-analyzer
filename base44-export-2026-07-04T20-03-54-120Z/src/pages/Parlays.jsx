@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { buildParlays, buildHRParlays, buildCustomParlay as buildCustomParlayFn } from "@/lib/parlays";
 import { recalculateParlayStatus } from "@/lib/utils/parlaySync";
 import { getMarketLabel } from "@/lib/constants/markets";
+import { computePickGrade, gradeColorClass } from "@/lib/utils/pickGrade";
 
 const DAILY_PARLAYS_KEY = "dailyParlays_v1";
 
@@ -373,12 +374,14 @@ export default function Parlays() {
                             <TableHead>Market</TableHead>
                             <TableHead className="text-right">Conf</TableHead>
                             <TableHead className="text-right">Proj</TableHead>
+                            <TableHead className="text-right">Grade</TableHead>
                             <TableHead className="text-right">Rec Score</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {allPicksForGames.map((p) => {
                             const picked = customSelectedPickIds.has(p.id);
+                            const { letterGrade } = computePickGrade(p);
                             return (
                               <TableRow
                                 key={p.id}
@@ -402,6 +405,11 @@ export default function Parlays() {
                                   {p.market === "home_run" || p.market === "hit_2"
                                     ? `${(p.projection * 100).toFixed(1)}%`
                                     : Number(p.projection).toFixed(2)}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <span className={"inline-block rounded px-1.5 py-0.5 text-xs font-bold " + gradeColorClass(letterGrade)}>
+                                    {letterGrade}
+                                  </span>
                                 </TableCell>
                                 <TableCell className="text-right tabular-nums">{Number(p.rec_score).toFixed(1)}</TableCell>
                               </TableRow>

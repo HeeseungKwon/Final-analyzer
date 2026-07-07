@@ -2,6 +2,7 @@ import { TableRow, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { getMarketLabel } from "@/lib/constants/markets";
+import { computePickGrade, gradeColorClass } from "@/lib/utils/pickGrade";
 
 /**
  * PredRow Component
@@ -74,6 +75,8 @@ export default function PredRow({ p, expanded, onToggle }) {
   const hrrOver15Prob = features?.hrrOver1_5Prob;
   const hrrOver25Prob = features?.hrrOver2_5Prob;
 
+  const { letterGrade, numericGrade } = computePickGrade(p);
+
   return (
     <>
       <TableRow
@@ -101,6 +104,13 @@ export default function PredRow({ p, expanded, onToggle }) {
         <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{p.trigger_text}</TableCell>
         <TableCell className="text-right">
           <div className="flex items-center justify-end gap-1">
+            {/* Pick grade badge */}
+            <span
+              title={`Grade score: ${numericGrade}`}
+              className={"inline-block rounded px-1.5 py-0.5 text-xs font-bold tabular-nums " + gradeColorClass(letterGrade)}
+            >
+              {letterGrade}
+            </span>
             {p.recommended && <Badge className="bg-emerald-600 hover:bg-emerald-600 text-[10px]">REC</Badge>}
             {/* HR Pick Verdicts */}
             {p.market === "home_run" && p.verdict === "strong" && (

@@ -287,47 +287,70 @@ export function buildParlays(predictions, selectedGamePks) {
     const pkSet = selectedGamePks instanceof Set ? selectedGamePks : new Set(selectedGamePks);
     if (pkSet.size === 0) return [];
 
+    // Primary pool: "ok" quality picks from selected games.
+    // Fallback pool: also includes "partial" quality when the primary pool is
+    // too small to assemble any parlay.
     const pool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality === "ok");
-    if (pool.length === 0) return [];
+    // Wider pool used if the strict pool cannot fill a 2-leg minimum.
+    const poolWide = pool.length >= 2
+      ? pool
+      : predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing");
+    if (poolWide.length === 0) return [];
 
-    const ranked = [...pool]
-      .map((p) => ({ ...p, _legProb: legProbabilityFor(p) }))
-      .map((p) => ({ ...p, _tier: tierForPrediction(p) }))
-      .sort((a, b) => b._legProb - a._legProb || (b.rec_score ?? 0) - (a.rec_score ?? 0) || (b.confidence ?? 0) - (a.confidence ?? 0));
+    const rankPool = (src) =>
+      [...src]
+        .map((p) => ({ ...p, _legProb: legProbabilityFor(p) }))
+        .map((p) => ({ ...p, _tier: tierForPrediction(p) }))
+        .sort((a, b) => b._legProb - a._legProb || (b.rec_score ?? 0) - (a.rec_score ?? 0) || (b.confidence ?? 0) - (a.confidence ?? 0));
+
+    const ranked = rankPool(poolWide);
 
     const parlays = [];
     const usedPlayers = new Set();
 
-    // 4-Leg A
+    // When the user has selected fewer games than parlay legs we must allow
+    // multiple picks from the same game.  The formula scales maxPerGame up so
+    // that the product (numGames × maxPerGame) always covers the target leg
+    // count, while keeping the classic limit of 1 when ≥4 games are selected.
+    const adaptiveMax = (targetLegs) =>
+      Math.max(1, Math.ceil(targetLegs / Math.min(pkSet.size, targetLegs)));
+
+    // 4-Leg A — safer profile markets, with adaptive per-game limit
+    const maxA = adaptiveMax(4);
+    // LEG_PROB_FLOOR: slightly relaxed vs the legacy 0.48 to include more picks
+    // when a small number of games are selected (fewer candidates available).
+    // 0.46 ≈ 46% leg probability, still above the breakeven for -120 juice (~0.45).
+    const legProbFloor = 0.46;
     const candsA = ranked.filter(
-      (p) => ["hit_2", "hrr_2", "hrr_3", "strikeouts", "total_bases"].includes(p.market) && p._legProb >= 0.48
+      (p) => ["hit_2", "hrr_2", "hrr_3", "strikeouts", "total_bases"].includes(p.market) && p._legProb >= legProbFloor
     );
     const legsA = pickTierMix(
       candsA,
       4,
       [{ tier: "s", count: 1 }, { tier: "a", count: 2 }, { tier: "b", count: 1 }],
-      { maxPerGame: 1, maxPerPlayer: 1, bannedPlayerIds: usedPlayers }
+      { maxPerGame: maxA, maxPerPlayer: 1, bannedPlayerIds: usedPlayers }
     ).map((p) => toLeg(p, `high-floor core (tier ${String(p._tier).toUpperCase()})`));
     const parA = assembleParlay("4-Leg A", "4 legs from safer profile markets (2+ hit / HRR / K / TB), diversified by game.", legsA, 4);
     if (parA) { parlays.push(parA); for (const l of parA.legs) usedPlayers.add(l.playerId); }
 
-    // 4-Leg B
+    // 4-Leg B — market diversity, with adaptive per-game limit
+    const maxB = adaptiveMax(4);
     const tierPriority = { s: 0, a: 1, b: 2, c: 3 };
     const marketRanked = [...ranked].sort((a, b) =>
       (tierPriority[a._tier] - tierPriority[b._tier]) || (b._legProb - a._legProb) || ((b.rec_score ?? 0) - (a.rec_score ?? 0))
     );
     const legsBPool = [];
     const seenMarketsB = new Set();
-    const seenGamesB = new Set();
+    const gameTallyB = new Map(); // tracks picks per game to respect adaptive limit
     const seenIdsB = new Set();
     for (const p of marketRanked) {
       if (legsBPool.length >= 4) break;
       if (usedPlayers.has(p.player_id)) continue;
       if (seenMarketsB.has(p.market)) continue;
-      if (seenGamesB.has(p.game_pk)) continue;
+      if ((gameTallyB.get(p.game_pk) ?? 0) >= maxB) continue;
       legsBPool.push(p);
       seenMarketsB.add(p.market);
-      seenGamesB.add(p.game_pk);
+      gameTallyB.set(p.game_pk, (gameTallyB.get(p.game_pk) ?? 0) + 1);
       seenIdsB.add(p.id);
     }
     if (legsBPool.length < 4) {
@@ -335,9 +358,9 @@ export function buildParlays(predictions, selectedGamePks) {
         if (legsBPool.length >= 4) break;
         if (usedPlayers.has(p.player_id)) continue;
         if (seenIdsB.has(p.id)) continue;
-        if (seenGamesB.has(p.game_pk)) continue;
+        if ((gameTallyB.get(p.game_pk) ?? 0) >= maxB) continue;
         legsBPool.push(p);
-        seenGamesB.add(p.game_pk);
+        gameTallyB.set(p.game_pk, (gameTallyB.get(p.game_pk) ?? 0) + 1);
         seenIdsB.add(p.id);
       }
     }
@@ -346,17 +369,18 @@ export function buildParlays(predictions, selectedGamePks) {
     if (parB) { parlays.push(parB); for (const l of parB.legs) usedPlayers.add(l.playerId); }
 
     // 5-Leg
-    const cands5 = ranked.filter((p) => p._legProb >= 0.48);
+    const max5 = adaptiveMax(5);
+    const cands5 = ranked.filter((p) => p._legProb >= legProbFloor);
     let legs5 = pickTierMix(
       cands5, 5,
       [{ tier: "s", count: 1 }, { tier: "a", count: 2 }, { tier: "b", count: 2 }],
-      { maxPerGame: 2, maxPerPlayer: 1, bannedPlayerIds: usedPlayers }
+      { maxPerGame: max5, maxPerPlayer: 1, bannedPlayerIds: usedPlayers }
     );
     if (legs5.length < 5) {
       legs5 = pickTierMix(
         cands5, 5,
         [{ tier: "s", count: 1 }, { tier: "a", count: 2 }, { tier: "b", count: 2 }],
-        { maxPerGame: 2, maxPerPlayer: 1 }
+        { maxPerGame: max5, maxPerPlayer: 1 }
       );
     }
     const par5 = assembleParlay(
@@ -364,6 +388,29 @@ export function buildParlays(predictions, selectedGamePks) {
       legs5.map((p) => toLeg(p, `leverage leg (tier ${String(p._tier).toUpperCase()})`)), 5
     );
     if (par5) parlays.push(par5);
+
+    // ── Fallback: guarantee at least one 2-leg parlay when enough picks exist
+    // This triggers when strict 4/5-leg assembly produced nothing but there are
+    // still ≥2 eligible picks in the selected games.
+    if (parlays.length === 0 && ranked.length >= 2) {
+      // Relaxed pool: no additional legProb floor applied beyond what rankPool
+      // already guarantees (data_quality filter only).  This intentionally
+      // allows picks that failed the 0.46 floor above — the goal here is to
+      // guarantee at least one parlay is returned when the user selected games.
+      const maxFallback = adaptiveMax(2);
+      const fallbackLegs = pickTierMix(
+        ranked, 2,
+        [{ tier: "s", count: 1 }, { tier: "a", count: 1 }, { tier: "b", count: 1 }, { tier: "c", count: 1 }],
+        { maxPerGame: maxFallback, maxPerPlayer: 1 }
+      );
+      const parFallback = assembleParlay(
+        "Best Available 2-Leg",
+        "2-leg parlay from the top available picks in selected games.",
+        fallbackLegs.map((p) => toLeg(p, `best available (tier ${String(p._tier).toUpperCase()})`)),
+        2
+      );
+      if (parFallback) parlays.push(parFallback);
+    }
 
     return parlays;
   }
@@ -572,29 +619,47 @@ export function buildHRParlays(predictions, selectedGamePks) {
     const pkSet = selectedGamePks instanceof Set ? selectedGamePks : new Set(selectedGamePks);
     if (pkSet.size === 0) return [];
 
-    const pool = predictions.filter(
+    // Primary pool: "ok" quality HR picks. Fallback to "partial" quality when empty.
+    let hrPool = predictions.filter(
       (p) => pkSet.has(p.game_pk) && p.market === "home_run" && p.data_quality === "ok"
     );
-    if (pool.length === 0) return [];
+    if (hrPool.length === 0) {
+      hrPool = predictions.filter(
+        (p) => pkSet.has(p.game_pk) && p.market === "home_run" && p.data_quality !== "missing"
+      );
+    }
+    if (hrPool.length === 0) return [];
 
-    const qualifyingPicks = pool.filter((p) => p.verdict === "strong" || p.verdict === "middling");
+    // Prefer strong/middling verdicts; fall back to all HR picks if none qualify.
+    let qualifyingPicks = hrPool.filter((p) => p.verdict === "strong" || p.verdict === "middling");
+    if (qualifyingPicks.length === 0) qualifyingPicks = hrPool;
     if (qualifyingPicks.length === 0) return [];
 
     const ranked = [...qualifyingPicks].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
     const parlays = [];
     const used = new Set();
 
-    const twoLeg = pickDiverse(ranked, 2, { maxPerGame: 1, maxPerPlayer: 1, bannedPlayerIds: used }).map((p) =>
-      toLeg(p, p.verdict === "strong" ? "model beats Park & Vegas" : "model between Park & Vegas (hidden edge)")
+    // Adaptive per-game limit: scale up when fewer games are selected so
+    // the user sees parlays even with 1-2 games.
+    const adaptiveMax2 = Math.max(1, Math.ceil(2 / Math.min(pkSet.size, 2)));
+    const adaptiveMax3 = Math.max(1, Math.ceil(3 / Math.min(pkSet.size, 3)));
+
+    const verdictReason = (p) =>
+      p.verdict === "strong"
+        ? "model beats Park & Vegas"
+        : p.verdict === "middling"
+          ? "model between Park & Vegas (hidden edge)"
+          : `HR pick (confidence ${Number(p.confidence ?? 0).toFixed(0)})`;
+
+    const twoLeg = pickDiverse(ranked, 2, { maxPerGame: adaptiveMax2, maxPerPlayer: 1, bannedPlayerIds: used }).map((p) =>
+      toLeg(p, verdictReason(p))
     );
     const par2 = assembleParlay("HR 2-Leg", "2-leg HR parlay (strong + middling picks allowed).", twoLeg, 2);
     if (par2) { parlays.push(par2); for (const l of par2.legs) used.add(l.playerId); }
 
-    let threeLegPool = pickDiverse(ranked, 3, { maxPerGame: 1, maxPerPlayer: 1, bannedPlayerIds: used });
-    if (threeLegPool.length < 3) threeLegPool = pickDiverse(ranked, 3, { maxPerGame: 1, maxPerPlayer: 1 });
-    const threeLeg = threeLegPool.map((p) =>
-      toLeg(p, p.verdict === "strong" ? "model beats Park & Vegas" : "model between Park & Vegas (hidden edge)")
-    );
+    let threeLegPool = pickDiverse(ranked, 3, { maxPerGame: adaptiveMax3, maxPerPlayer: 1, bannedPlayerIds: used });
+    if (threeLegPool.length < 3) threeLegPool = pickDiverse(ranked, 3, { maxPerGame: adaptiveMax3, maxPerPlayer: 1 });
+    const threeLeg = threeLegPool.map((p) => toLeg(p, verdictReason(p)));
     const par3 = assembleParlay("HR 3-Leg", "3-leg HR parlay (strong + middling picks allowed).", threeLeg, 2);
     if (par3) parlays.push(par3);
 
