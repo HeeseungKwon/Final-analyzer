@@ -19,6 +19,8 @@ import { edgeBasedScoring, scoreHitter, scorePitcher, parkFactorFor, getHitterSi
 import { fetchRealtimeOdds } from "@/lib/sportsbook-api";
 import { enrichPredictionWithProjections } from "@/lib/projection-scorer";
 
+const DEFAULT_PITCHER_ERA = 4.0;
+
 function parseFeatures(raw) {
   if (!raw) return {};
   if (typeof raw === "object") return raw;
@@ -244,7 +246,7 @@ export async function runAnalysis(dateArg, onProgress) {
             hits_allowed: oppSPStats.hits_allowed ?? 0,
             hr_allowed: oppSPStats.hr_allowed ?? 0,
             bb: oppSPStats.bb ?? 0,
-            era: oppSPStats.era ?? 4.0,
+            era: oppSPStats.era ?? DEFAULT_PITCHER_ERA,
             k_percent: oppSPStats.k_percent ?? 0,
           }
         : null;

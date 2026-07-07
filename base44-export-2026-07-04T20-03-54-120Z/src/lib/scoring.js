@@ -26,6 +26,7 @@ const LEAGUE_AVG = {
 
 const LEAGUE_AVG_RUNS_PER_GAME = 4.5;
 const LEAGUE_AVG_BARREL_PCT = 0.075;
+const HIT_TO_SINGLE_ADJUSTMENT_FACTOR = 0.85;
 const STRIKEOUT_MARKET = "strikeouts";
 const MIN_PROBABILITY = 0.01;
 const MAX_PROBABILITY = 0.99;
@@ -367,8 +368,8 @@ function buildPitcherRates(ctx) {
   const hrPerBfFallback = Number(ctx?.oppPitcherHrPerBF);
 
   const singleRate = hasPitcherStats
-    // hits_allowed includes XBH; divide by 0.85 to approximate singles-allowed per BF.
-    ? Math.max(0, statHitsAllowed / bf / 0.85)
+    // hits_allowed includes singles + extra-base hits; scale by adjustment factor to estimate 1B/BF.
+    ? Math.max(0, statHitsAllowed / bf / HIT_TO_SINGLE_ADJUSTMENT_FACTOR)
     : LEAGUE_AVG["1b"];
   const hrRate = hasPitcherStats
     ? Math.max(0, statHrAllowed / bf)
@@ -379,8 +380,8 @@ function buildPitcherRates(ctx) {
 
   return {
     "1b": singleRate,
-    // Pitcher-level doubles/triples allowed splits are not reliably available in current context.
-    // Keep league baselines for stability instead of inferring from sparse aggregates.
+    // We can infer singles from aggregate hits_allowed, but this context does not include pitcher 2B/3B splits.
+    // Keep league 2B/3B baselines for stability instead of inventing noisy estimates.
     "2b": LEAGUE_AVG["2b"],
     "3b": LEAGUE_AVG["3b"],
     "hr": hrRate,
