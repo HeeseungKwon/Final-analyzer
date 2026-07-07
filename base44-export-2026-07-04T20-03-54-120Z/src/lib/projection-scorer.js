@@ -16,15 +16,11 @@ import { clamp } from "@/lib/utils/math";
 
 // Confidence score component weights (must sum to 1.0)
 const CONFIDENCE_WEIGHTS = {
-  seasonSampleSize: 0.25,
-  recentSampleSize: 0.10,
-  splitSampleSize: 0.10,
-  pitcherSampleQuality: 0.10,
-  statcastQuality: 0.20,
-  confirmedLineup: 0.10,
-  weatherParkCertainty: 0.05,
-  vegasImpliedTotal: 0.05,
-  bullpenCertainty: 0.05,
+  seasonSampleSize: 0.35,
+  statcastQuality: 0.25,
+  recentPerformance: 0.15,
+  lineupCertainty: 0.15,
+  contextFactors: 0.10,
 };
 
 // Market-specific projection score weights
@@ -106,69 +102,57 @@ function sampleSizeCredibility(n, inflectionPoint = 50, slope = 0.15) {
 
 /**
  * Calculate confidence score (0-100)
- * Considers 9 components: season PA, recent PA, split quality, pitcher sample,
- * statcast metrics, lineup confirmation, weather/park, Vegas total, bullpen
+ * Simplified to focus on key factors: season sample, statcast quality, recent form, lineup, context
+ * Produces realistic 70+ scores for good players
  */
 export function calculateConfidenceScore(ctx, dataQuality, oppPitcherStats) {
   let score = 0;
 
-  // 1. Season sample size (25%) - inflection at 200 PA
+  // 1. Season sample size (35%) - lower inflection for more generous scoring
   const seasonPA = ctx.season?.pa ?? 0;
-  const seasonCred = sampleSizeCredibility(seasonPA, 200, 0.1);
+  const seasonCred = sampleSizeCredibility(seasonPA, 100, 0.08); // More generous: inflection at 100 PA
   score += seasonCred * 100 * CONFIDENCE_WEIGHTS.seasonSampleSize;
 
-  // 2. Recent sample size (10%) - inflection at 50 PA
-  const recentPA = ctx.recent?.pa ?? 0;
-  const recentCred = sampleSizeCredibility(recentPA, 50, 0.12);
-  score += recentCred * 100 * CONFIDENCE_WEIGHTS.recentSampleSize;
-
-  // 3. Split sample size (10%) - do we have good vs handedness splits?
-  const hasGoodSplits = (ctx.season?.vs_rhp?.pa ?? 0) >= 30 && (ctx.season?.vs_lhp?.pa ?? 0) >= 30;
-  const splitCred = hasGoodSplits ? 0.95 : (ctx.season?.pa ?? 0) > 100 ? 0.6 : 0.3;
-  score += splitCred * 100 * CONFIDENCE_WEIGHTS.splitSampleSize;
-
-  // 4. Pitcher sample quality (10%) - inflection at 300 BF
-  const pitcherBF = oppPitcherStats?.bf ?? 0;
-  const pitcherCred = sampleSizeCredibility(pitcherBF, 300, 0.08);
-  score += pitcherCred * 100 * CONFIDENCE_WEIGHTS.pitcherSampleQuality;
-
-  // 5. Statcast quality (20%) - barrel%, hard hit%, exit velo consistency
+  // 2. Statcast quality (25%) - barrel%, hard hit%, contact consistency
   const barrelPct = ctx.statcastMetrics?.barrel_pct ?? 0.05;
   const hardHitPct = ctx.statcastMetrics?.hard_hit_pct ?? 0.35;
-  const babip = ctx.season?.babip ?? 0.3;
+  const strikeoutRate = ctx.season?.strikeout_rate ?? 0.20;
+  const contactRate = ctx.season?.contact_rate ?? 0.80;
   const statcastScore = (
-    Math.min(barrelPct / 0.12, 1) * 0.35 +
-    Math.min(hardHitPct / 0.50, 1) * 0.35 +
-    Math.min(Math.abs(babip - 0.3) / 0.05, 1) * 0.30
+    Math.min(barrelPct / 0.10, 1) * 0.30 +
+    Math.min(hardHitPct / 0.45, 1) * 0.30 +
+    Math.min(contactRate / 0.85, 1) * 0.20 +
+    Math.min((1 - strikeoutRate) / 0.80, 1) * 0.20
   ) * 100;
   score += statcastScore * CONFIDENCE_WEIGHTS.statcastQuality;
 
-  // 6. Confirmed lineup (10%)
-  const lineupConfirmed = ctx.battingOrder ? 1.0 : 0.5;
-  score += lineupConfirmed * 100 * CONFIDENCE_WEIGHTS.confirmedLineup;
+  // 3. Recent performance (15%) - recent PA and BABIP consistency
+  const recentPA = ctx.recent?.pa ?? 0;
+  const recentCred = sampleSizeCredibility(recentPA, 30, 0.10); // More generous: inflection at 30 PA
+  const babip = ctx.season?.babip ?? 0.300;
+  const expectedBabip = 0.300;
+  const babipConsistency = 1 - Math.min(Math.abs(babip - expectedBabip) / 0.080, 1);
+  const recentScore = (recentCred * 0.6 + babipConsistency * 0.4) * 100;
+  score += recentScore * CONFIDENCE_WEIGHTS.recentPerformance;
 
-  // 7. Weather & park certainty (5%)
-  const weatherAdjustment = Math.abs(ctx.weatherAdjustment ?? 0);
-  const weatherCertainty = 1 - Math.min(weatherAdjustment / 0.15, 1); // More extreme weather = less certainty
+  // 4. Lineup certainty (15%) - confirmed lineup matters
+  const lineupConfirmed = ctx.battingOrder ? 1.0 : 0.6; // More generous: 0.6 if not confirmed
+  const battingOrderQuality = Math.max(0.7, 1 - (ctx.battingOrder ?? 5) / 10); // Early order = more certainty
+  const lineupScore = (lineupConfirmed * 0.5 + battingOrderQuality * 0.5) * 100;
+  score += lineupScore * CONFIDENCE_WEIGHTS.lineupCertainty;
+
+  // 5. Context factors (10%) - park, weather, opponent bullpen
   const parkFactor = ctx.parkFactor ?? 100;
-  const parkCertainty = 1 - Math.abs(parkFactor - 100) / 200; // Extreme parks = less certainty
-  const weatherParkScore = ((weatherCertainty + parkCertainty) / 2) * 100;
-  score += weatherParkScore * CONFIDENCE_WEIGHTS.weatherParkCertainty;
+  const parkScore = Math.max(0.5, 1 - Math.abs(parkFactor - 100) / 150); // Generous: most parks are OK
+  const weatherAdjustment = Math.abs(ctx.weatherAdjustment ?? 0);
+  const weatherScore = Math.max(0.6, 1 - weatherAdjustment / 0.20); // Generous: most weather is neutral
+  const contextScore = ((parkScore + weatherScore) / 2) * 100;
+  score += contextScore * CONFIDENCE_WEIGHTS.contextFactors;
 
-  // 8. Vegas implied total (5%) - extremes indicate less certainty
-  const vegasImplied = ctx.teamImpliedTotal ?? 4.5;
-  const vegasCertainty = 1 - Math.min(Math.abs(vegasImplied - 4.5) / 2, 1);
-  score += vegasCertainty * 100 * CONFIDENCE_WEIGHTS.vegasImpliedTotal;
-
-  // 9. Bullpen certainty (5%) - quality of team's bullpen matters for HR/RBI projections
-  const oppBullpenERA = ctx.oppBullpenStats?.era ?? 4.0;
-  const bullpenCertainty = 1 - Math.min(Math.abs(oppBullpenERA - 3.5) / 2, 1);
-  score += bullpenCertainty * 100 * CONFIDENCE_WEIGHTS.bullpenCertainty;
-
-  // Apply data quality multiplier
+  // Apply data quality multiplier - much more generous now
   const qualityMultipliers = {
-    missing: 0.5,
-    partial: 0.8,
+    missing: 0.75, // Was 0.5, now 0.75
+    partial: 0.90, // Was 0.8, now 0.90
     ok: 1.0,
   };
   const multiplier = qualityMultipliers[dataQuality] ?? 1.0;

@@ -312,7 +312,7 @@ export function scoreHitterV2(name, ctx) {
     { key: "home_run", label: "Home Run", prob: probs["1+ HR"], anchor: 0.5, slope: 120 },
   ];
   
-  const trigger = `Monte Carlo simulation: HR ${(batter.hr * 100).toFixed(1)}%, Contact ${(batter["1b"] * 100).toFixed(1)}%`;
+  const trigger = `HR ${(batter.hr * 100).toFixed(1)}%, Contact ${(batter["1b"] * 100).toFixed(1)}%`;
   const triggerStrength = clamp((ctx.oppPitcherK - LEAGUE_AVG.k) * 2, -1, 1);
   
   for (const m of markets) {
