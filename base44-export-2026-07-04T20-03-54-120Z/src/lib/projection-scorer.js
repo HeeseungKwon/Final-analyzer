@@ -12,7 +12,7 @@
  * Reuses existing analyzer outputs; no duplicate calculations.
  */
 
-import { clamp } from "@/lib/utils/math";
+import { clamp, toConfidence } from "@/lib/utils/math";
 
 // Confidence score component weights (must sum to 1.0)
 const CONFIDENCE_WEIGHTS = {
@@ -90,6 +90,36 @@ const MARKET_WEIGHTS = {
   },
 };
 
+const MARKET_PROBABILITY_CALIBRATION_BASE = {
+  hr: { anchor: 0.10, slope: 300 },
+  hits2: { anchor: 0.34, slope: 170 },
+  tb2: { anchor: 0.33, slope: 175 },
+  tb3: { anchor: 0.20, slope: 200 },
+  hrr2: { anchor: 0.30, slope: 180 },
+  hrr3: { anchor: 0.17, slope: 220 },
+};
+
+const MARKET_PROBABILITY_CALIBRATION = {
+  "1+ HR": MARKET_PROBABILITY_CALIBRATION_BASE.hr,
+  "home_run": MARKET_PROBABILITY_CALIBRATION_BASE.hr,
+  "2+ Hits": MARKET_PROBABILITY_CALIBRATION_BASE.hits2,
+  "2+ Total Bases": MARKET_PROBABILITY_CALIBRATION_BASE.tb2,
+  "3+ Total Bases": MARKET_PROBABILITY_CALIBRATION_BASE.tb3,
+  "2+ HRR": MARKET_PROBABILITY_CALIBRATION_BASE.hrr2,
+  "hrr_2": MARKET_PROBABILITY_CALIBRATION_BASE.hrr2,
+  "3+ HRR": MARKET_PROBABILITY_CALIBRATION_BASE.hrr3,
+  "hrr_3": MARKET_PROBABILITY_CALIBRATION_BASE.hrr3,
+};
+
+const DEFAULT_MARKET_PROBABILITY_CALIBRATION = { anchor: 0.30, slope: 180 };
+
+const CONFIDENCE_QUALITY_FLOOR = {
+  // Keys mirror Prediction.data_quality enum values
+  missing: 35,
+  partial: 48,
+  ok: 58,
+};
+
 /**
  * Sample size credibility using logistic curve
  * Returns 0-1 where 1 = maximum credibility
@@ -157,6 +187,12 @@ export function calculateConfidenceScore(ctx, dataQuality, oppPitcherStats) {
   };
   const multiplier = qualityMultipliers[dataQuality] ?? 1.0;
   score *= multiplier;
+
+  const qualityFloor = CONFIDENCE_QUALITY_FLOOR[dataQuality];
+  if (qualityFloor === undefined && dataQuality !== null && dataQuality !== undefined) {
+    console.warn(`Unknown data quality in confidence scoring: ${dataQuality}`);
+  }
+  score = Math.max(score, qualityFloor ?? CONFIDENCE_QUALITY_FLOOR.missing);
 
   return clamp(score, 0, 100);
 }
@@ -298,7 +334,12 @@ export function calculateMarketProjectionScore(
   const weights = MARKET_WEIGHTS[market] || MARKET_WEIGHTS["2+ Hits"];
 
   // Get base metrics
-  const modelProbScore = clamp(Number(prediction.projection ?? 0.5) * 100, 0, 100);
+  const marketCalibration = MARKET_PROBABILITY_CALIBRATION[market] ?? DEFAULT_MARKET_PROBABILITY_CALIBRATION;
+  const modelProbScore = toConfidence(
+    Number(prediction.projection ?? 0.5),
+    marketCalibration.anchor,
+    marketCalibration.slope
+  );
   const projectedStats = extractProjectedStats(simulationData);
 
   // Normalize expected value to slate
