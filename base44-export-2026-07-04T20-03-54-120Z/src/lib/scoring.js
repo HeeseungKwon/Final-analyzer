@@ -367,6 +367,7 @@ function buildPitcherRates(ctx) {
   const hrPerBfFallback = Number(ctx?.oppPitcherHrPerBF);
 
   const singleRate = hasPitcherStats
+    // Approximate singles from total hits by removing expected XBH share (~15%).
     ? Math.max(0, statHitsAllowed / bf / 0.85)
     : LEAGUE_AVG["1b"];
   const hrRate = hasPitcherStats
@@ -378,6 +379,8 @@ function buildPitcherRates(ctx) {
 
   return {
     "1b": singleRate,
+    // Pitcher-level doubles/triples allowed splits are not reliably available in current context.
+    // Keep league baselines for stability instead of inferring from sparse aggregates.
     "2b": LEAGUE_AVG["2b"],
     "3b": LEAGUE_AVG["3b"],
     "hr": hrRate,
