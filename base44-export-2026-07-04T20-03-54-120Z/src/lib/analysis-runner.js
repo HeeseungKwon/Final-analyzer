@@ -12,8 +12,9 @@ import {
   currentMlbSeason,
   todayIsoDate,
 } from "@/lib/mlb-api";
-import { scoreHitter, scorePitcher, parkFactorFor } from "@/lib/scoring";
+import { scoreHitter, scorePitcher, parkFactorFor, getHitterSimulationData } from "@/lib/scoring";
 import { getRecommendationMarketPriority } from "@/lib/constants/markets";
+import { enrichPredictionWithProjections, getAllMarketRankings } from "@/lib/projection-scorer";
 
 // Support for gradual rollout: wrap new engine calls with fallback
 const USE_NEW_ENGINE = true;
@@ -518,9 +519,16 @@ export async function runAnalysis(dateArg, onProgress) {
           };
 
           const modernScores = scoreHitter(lp.fullName, baseCtx);
+          
+          // Get simulation data for projection scoring
+          let simulationData = null;
+          try {
+            simulationData = getHitterSimulationData(baseCtx);
+          } catch {}
 
           for (const s of modernScores) {
-            predictionRows.push({
+            // Base prediction row
+            let predRow = {
               game_pk: g.game_pk,
               game_date: date,
               player_id: lp.id,
@@ -541,7 +549,29 @@ export async function runAnalysis(dateArg, onProgress) {
               rec_score: Math.round(s.recScore * 100) / 100,
               verdict: s.verdict ?? "",
               verdict_note: s.verdictNote ?? "",
-            });
+            };
+            
+            // Enrich with projection scores if simulation data available
+            if (simulationData) {
+              try {
+                const enriched = enrichPredictionWithProjections(
+                  predRow,
+                  baseCtx,
+                  simulationData,
+                  {
+                    "hit_2": s.market === "hit_2" ? s.projection : null,
+                    "total_bases": s.market === "total_bases" ? s.projection : null,
+                    "hrr_2": s.market === "hrr_2" ? s.projection : null,
+                    "hrr_3": s.market === "hrr_3" ? s.projection : null,
+                    "home_run": s.market === "home_run" ? s.projection : null,
+                  },
+                  s.dataQuality
+                );
+                predRow = enriched;
+              } catch {}
+            }
+            
+            predictionRows.push(predRow);
           }
         } catch (e) {
           excludedRows.push({ game_date: date, player_id: lp.id, player_name: lp.fullName, reason: `Error: ${e.message}` });

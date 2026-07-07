@@ -394,4 +394,45 @@ export function parkFactorFor(homeTeamId) {
   return homeTeamId ? (HR_PARK_FACTOR[homeTeamId] ?? 100) : 100;
 }
 
+/**
+ * Get simulation data for projection scoring
+ * Used by projection-scorer.js to enrich predictions
+ */
+export function getHitterSimulationData(ctx) {
+  const batter = {
+    "1b": (ctx.season?.hits ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
+    "2b": (ctx.season?.doubles ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
+    "3b": (ctx.season?.triples ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
+    "hr": (ctx.season?.home_runs ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
+    "bb": (ctx.season?.bb ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
+    "hbp": (ctx.season?.hbp ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
+    "k": (ctx.season?.so ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
+  };
+  
+  const pitcher = {
+    "1b": (ctx.oppPitcherStats?.hits_allowed ?? 0) / Math.max(1, ctx.oppPitcherStats?.bf ?? 1) / 0.85,
+    "2b": 0.045,
+    "3b": 0.004,
+    "hr": (ctx.oppPitcherStats?.hr_allowed ?? 0) / Math.max(1, ctx.oppPitcherStats?.bf ?? 1),
+    "bb": (ctx.oppPitcherStats?.bb ?? 0) / Math.max(1, ctx.oppPitcherStats?.bf ?? 1),
+    "hbp": 0.010,
+    "k": ctx.oppPitcherK ?? LEAGUE_AVG.k,
+  };
+  
+  const gameCtx = {
+    parkFactor: (ctx.parkFactor ?? 100) / 100,
+    parkFactor2b: ((ctx.parkFactor ?? 100) / 100) * 1.02,
+    parkFactorHr: ((ctx.parkFactor ?? 100) / 100) * 1.12,
+    windHrMult: 1.05,
+    teamImpliedTotal: ctx.teamImpliedTotal ?? 4.5,
+    onbaseRateAhead: ctx.onbaseRateAhead ?? 0.32,
+    onbaseRateBehind: ctx.onbaseRateBehind ?? 0.32,
+    gbFbRatio: ctx.oppPitcherGbFbRatio ?? 1.0,
+    barrelPct: ctx.barrelPct,
+    lineupSpot: ctx.battingOrder ?? 5,
+  };
+  
+  return simulateGame(batter, pitcher, gameCtx, 100000);
+}
+
 export { scoreHitterV2 as scoreHitter, scorePitcherV2 as scorePitcher };
