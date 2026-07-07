@@ -58,6 +58,13 @@ const MARKET_POPULARITY = {
   home_run: 0.62,
 };
 
+const REDUNDANCY_RULES = {
+  maxPicksPerPlayer: 2,
+  maxPerGame: 6,
+  hrr3EdgeDelta: 0.015,
+  hrr3MinConfidence: 58,
+};
+
 const CONSENSUS_THRESHOLD = {
   hit_2: 62,
   hrr_2: 61,
@@ -81,9 +88,14 @@ function rankForPortfolio(row) {
   const features = parseFeatures(row.features);
   const consensusBonus = features.consensus_legacy ? 12 : 0;
   const marketBonus = MARKET_TRUST_BONUS[row.market] ?? 0;
+  const modelEdge = Number(features.modelEdge ?? 0);
+  const impliedProb = Number(features.impliedMarketProb ?? 0.5);
 
   const pOver = Number(features.pOverLine);
   const pOverBonus = Number.isFinite(pOver) ? Math.max(0, (pOver - 0.5) * 45) : 0;
+  const edgeBonus = Math.max(-4, Math.min(12, modelEdge * 100 * 0.65));
+  const variancePenalty = Number(features.variancePenalty ?? 0) * 6;
+  const marketAlignment = Math.max(0, 8 - Math.abs((pOver || impliedProb) - impliedProb) * 12);
 
   const spread = Math.max(0, (row.ceiling ?? 0) - (row.floor ?? 0));
   const certaintyBonus = Math.max(0, 8 - spread * 12);
@@ -95,7 +107,7 @@ function rankForPortfolio(row) {
     else if (row.verdict === "middling") verdictBonus = 5;
   }
 
-  return (row.rec_score ?? 0) + consensusBonus + marketBonus + pOverBonus + certaintyBonus + verdictBonus;
+  return (row.rec_score ?? 0) + consensusBonus + marketBonus + pOverBonus + edgeBonus + certaintyBonus + marketAlignment + verdictBonus - variancePenalty;
 }
 
 function styleForPortfolio(row) {
@@ -128,9 +140,9 @@ function rebalanceRecommendations(rows) {
   // types (HR, HRR, TB, Hits) counts as ONE unique player toward this target.
   // When fewer than 50 valid candidates exist all available players are returned.
   const TARGET_UNIQUE_PLAYERS = 50;
-  // Allow up to 4 market-type picks per player so all applicable markets appear.
-  const MAX_PICKS_PER_PLAYER = 4;
-  const MAX_PER_GAME = 6;
+  // Keep at most two markets per player to reduce redundant exposure while
+  // still allowing one secondary market when edge is materially distinct.
+  const MAX_PICKS_PER_PLAYER = REDUNDANCY_RULES.maxPicksPerPlayer;
   const POWER_MARKETS = new Set(["home_run", "hrr_2", "hrr_3", "total_bases"]);
 
   const candidates = rows
@@ -147,6 +159,7 @@ function rebalanceRecommendations(rows) {
   const byMarket = new Map();
   const byPlayer = new Map();
   const byGame = new Map();
+  const playerFamilies = new Map();
   const playerPowerTaken = new Set();
   const selected = new Set();
   // Dedupe key: unique player identities selected (counts toward the 50-player target)
@@ -171,7 +184,11 @@ function rebalanceRecommendations(rows) {
     if (POWER_MARKETS.has(c.row.market) && playerPowerTaken.has(c.row.player_id)) return false;
 
     const gameCount = byGame.get(c.row.game_pk) ?? 0;
-    if (gameCount >= MAX_PER_GAME) return false;
+    if (gameCount >= REDUNDANCY_RULES.maxPerGame) return false;
+
+    const families = playerFamilies.get(c.row.player_id) ?? new Set();
+    const family = marketFamily(c.row.market);
+    if (families.has(family)) return false;
 
     return true;
   };
@@ -185,6 +202,9 @@ function rebalanceRecommendations(rows) {
     if (POWER_MARKETS.has(c.row.market)) {
       playerPowerTaken.add(c.row.player_id);
     }
+    const families = playerFamilies.get(c.row.player_id) ?? new Set();
+    families.add(marketFamily(c.row.market));
+    playerFamilies.set(c.row.player_id, families);
   };
 
   // Phase 1: Fill style buckets targeting unique players per style
@@ -224,6 +244,58 @@ function rebalanceRecommendations(rows) {
   rows.forEach((r, idx) => {
     r.recommended = selected.has(idx);
   });
+}
+
+function marketFamily(market) {
+  if (market === "strikeouts") return "pitcher_k";
+  if (market === "home_run") return "home_run";
+  if (market === "hrr_3") return "hrr_ladder";
+  return "contact_combo";
+}
+
+function pruneRedundantRecommendations(rows) {
+  const recommendedByPlayer = new Map();
+  rows.forEach((row, idx) => {
+    if (!row.recommended) return;
+    if (!recommendedByPlayer.has(row.player_id)) recommendedByPlayer.set(row.player_id, []);
+    recommendedByPlayer.get(row.player_id).push({ row, idx, features: parseFeatures(row.features) });
+  });
+
+  for (const picks of recommendedByPlayer.values()) {
+    if (picks.length <= 1) continue;
+    picks.sort((a, b) => (b.row.rec_score ?? 0) - (a.row.rec_score ?? 0));
+
+    const keep = new Set();
+    const familyBest = new Map();
+    for (const pick of picks) {
+      const family = marketFamily(pick.row.market);
+      const existing = familyBest.get(family);
+      if (!existing || (pick.row.rec_score ?? 0) > (existing.row.rec_score ?? 0)) {
+        familyBest.set(family, pick);
+      }
+    }
+
+    for (const best of familyBest.values()) keep.add(best.idx);
+
+    const hrr2 = picks.find((p) => p.row.market === "hrr_2");
+    const hrr3 = picks.find((p) => p.row.market === "hrr_3");
+    if (hrr2 && hrr3) {
+      const hrr3Edge = Number(hrr3.features.modelEdge ?? 0);
+      const hrr2Edge = Number(hrr2.features.modelEdge ?? 0);
+      if (
+        hrr3Edge >= hrr2Edge + REDUNDANCY_RULES.hrr3EdgeDelta &&
+        (hrr3.row.confidence ?? 0) >= REDUNDANCY_RULES.hrr3MinConfidence
+      ) {
+        keep.add(hrr3.idx);
+      } else {
+        keep.delete(hrr3.idx);
+      }
+    }
+
+    picks.forEach((pick) => {
+      rows[pick.idx].recommended = keep.has(pick.idx);
+    });
+  }
 }
 
 /**
@@ -621,6 +693,7 @@ export async function runAnalysis(dateArg, onProgress) {
 
   rebalanceRecommendations(predictionRows);
   topUpRecommendations(predictionRows);
+  pruneRedundantRecommendations(predictionRows);
 
   log(`Saving ${predictionRows.length} predictions...`);
   const BATCH = 50;

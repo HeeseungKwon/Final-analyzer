@@ -12,8 +12,7 @@
  * where the model's view sits between Vegas and ballpark, creating valuation opportunities.
  */
 
-import { clamp, smooth, probToAmerican, blend } from "@/lib/utils/math";
-import { computeHRVerdict } from "@/lib/scoring-advanced";
+import { clamp, smooth, probToAmerican } from "@/lib/utils/math";
 
 const PDT_TZ = "America/Los_Angeles";
 
@@ -22,6 +21,31 @@ const SLOT_LABELS = {
   noon: "Between 12:01 pm and 3 pm PDT",
   afternoon: "Between 3:01 pm and 5pm PDT",
   left: "Games Left",
+};
+
+const PARLAY_RANK_WEIGHTS = {
+  ev: 100,
+  confidence: 0.52,
+  correlationPenalty: 28,
+  edge: 85,
+};
+
+// Keeps brute-force combination search responsive in the client for large slates.
+const MAX_CANDIDATE_PARLAYS = 140;
+// Reject only deeply negative cards; keep slightly negative options for thin slates.
+const MIN_PARLAY_EV = -0.18;
+// Parlays sharing >=67% of legs are considered redundant portfolio exposure.
+const MAX_PARLAY_OVERLAP = 0.67;
+const MAX_RANKED_POOL_SIZE = 18;
+const MAX_PICKS_PER_FAMILY = 2;
+const MIN_PICK_EDGE = -0.04;
+
+const CORRELATION_COMPONENTS = {
+  base: 0.03,
+  samePlayer: 0.56,
+  sameGame: 0.18,
+  sameFamily: 0.13,
+  sameMarket: 0.06,
 };
 
 function pdtMinutesFromIso(isoUtc) {
@@ -134,6 +158,7 @@ function legProbabilityFor(p) {
  * Includes Vegas/park verdict for HR picks
  */
 function toLeg(p, reason) {
+  const features = parseFeatures(p.features);
   const legObj = {
     predictionId: p.id,
     playerId: p.player_id,
@@ -142,6 +167,7 @@ function toLeg(p, reason) {
     market: p.market,
     gamePk: p.game_pk,
     legProb: legProbabilityFor(p),
+    impliedProb: impliedProbForPrediction(p),
     projection: p.projection,
     confidence: p.confidence,
     tier: p._tier ?? null,
@@ -151,8 +177,8 @@ function toLeg(p, reason) {
   // For HR picks, include verdict info for transparency
   if (p.market === "home_run" && p.features) {
     legObj.verdict = p.verdict;
-    legObj.vegasProb = p.features.vegasHrProb;
-    legObj.parkProb = p.features.parkHrProb;
+    legObj.vegasProb = features.vegasHrProb;
+    legObj.parkProb = features.parkHrProb;
   }
 
   return legObj;
@@ -166,6 +192,9 @@ function assembleParlay(name, strategy, legs, minLegs = 4) {
   if (legs.length < minLegs) return null;
   const combined = legs.reduce((a, l) => a * l.legProb, 1);
   const be = breakEvenProbForLegs(legs.length);
+  const avgConfidence = legs.reduce((sum, l) => sum + Number(l.confidence ?? 0), 0) / Math.max(1, legs.length);
+  const implied = legs.reduce((acc, leg) => acc * clamp(Number(leg.impliedProb ?? 0.545), 0.05, 0.95), 1);
+  const avgEdge = combined - implied;
   return {
     name,
     strategy,
@@ -173,6 +202,9 @@ function assembleParlay(name, strategy, legs, minLegs = 4) {
     combinedProb: combined,
     breakEvenProb: be,
     edge: combined - be,
+    ev: combined * Math.pow(1.8333333333, legs.length) - 1,
+    avgConfidence,
+    avgEdge,
     fairAmericanOdds: probToAmerican(combined),
   };
 }
@@ -184,6 +216,89 @@ function assembleParlay(name, strategy, legs, minLegs = 4) {
  */
 function breakEvenProbForLegs(n) {
   return Math.pow(0.545, n);
+}
+
+function marketFamily(market) {
+  if (market === "home_run") return "home_run";
+  if (market === "strikeouts") return "pitcher_k";
+  if (market === "hrr_3") return "hrr_ladder";
+  return "contact_combo";
+}
+
+function impliedProbForPrediction(p) {
+  const features = parseFeatures(p.features);
+  const fallback = {
+    hit_2: 0.33,
+    total_bases: 0.53,
+    hrr_2: 0.56,
+    hrr_3: 0.34,
+    home_run: 0.14,
+    strikeouts: 0.46,
+  };
+  return clamp(Number(features?.impliedMarketProb ?? fallback[p.market] ?? 0.545), 0.05, 0.95);
+}
+
+function pairCorrelation(a, b) {
+  let corr = CORRELATION_COMPONENTS.base;
+  if (a.player_id === b.player_id) corr += CORRELATION_COMPONENTS.samePlayer;
+  if (a.game_pk === b.game_pk) corr += CORRELATION_COMPONENTS.sameGame;
+  if (marketFamily(a.market) === marketFamily(b.market)) corr += CORRELATION_COMPONENTS.sameFamily;
+  if (a.market === b.market) corr += CORRELATION_COMPONENTS.sameMarket;
+  return clamp(corr, 0, 0.85);
+}
+
+function parlayCorrelation(rawLegs) {
+  if (rawLegs.length <= 1) return 0;
+  let pairSum = 0;
+  let pairs = 0;
+  for (let i = 0; i < rawLegs.length; i++) {
+    for (let j = i + 1; j < rawLegs.length; j++) {
+      pairSum += pairCorrelation(rawLegs[i], rawLegs[j]);
+      pairs += 1;
+    }
+  }
+  return pairSum / Math.max(1, pairs);
+}
+
+function overlapRatio(a, b) {
+  const aSet = new Set(a.legs.map((l) => l.predictionId));
+  const bSet = new Set(b.legs.map((l) => l.predictionId));
+  let inter = 0;
+  for (const id of aSet) if (bSet.has(id)) inter += 1;
+  const union = new Set([...aSet, ...bSet]).size;
+  return union === 0 ? 0 : inter / union;
+}
+
+function enrichParlayRanking(parlay, rawLegs) {
+  const correlation = parlayCorrelation(rawLegs);
+  const confidence = parlay.avgConfidence ?? 0;
+  const ev = parlay.ev ?? 0;
+  const rankingScore =
+    ev * PARLAY_RANK_WEIGHTS.ev +
+    confidence * PARLAY_RANK_WEIGHTS.confidence -
+    correlation * PARLAY_RANK_WEIGHTS.correlationPenalty +
+    (parlay.avgEdge ?? 0) * PARLAY_RANK_WEIGHTS.edge;
+  return {
+    ...parlay,
+    correlation,
+    rankingScore,
+  };
+}
+
+function dedupeAndRankParlays(candidates, limit = 8) {
+  const sorted = [...candidates].sort((a, b) => b.rankingScore - a.rankingScore);
+  const out = [];
+  for (const cand of sorted) {
+    if (out.length >= limit) break;
+    // Shared legs above MAX_PARLAY_OVERLAP means the parlay is mostly duplicate exposure.
+    if (out.some((existing) => overlapRatio(existing, cand) >= MAX_PARLAY_OVERLAP)) continue;
+    out.push(cand);
+  }
+  return out;
+}
+
+function adaptiveMaxPerGame(selectedGameCount, legSize) {
+  return Math.max(1, Math.ceil(legSize / Math.max(1, Math.min(selectedGameCount, legSize))));
 }
 
 /**
@@ -286,133 +401,84 @@ export function buildParlays(predictions, selectedGamePks) {
   if (selectedGamePks !== undefined && selectedGamePks !== null) {
     const pkSet = selectedGamePks instanceof Set ? selectedGamePks : new Set(selectedGamePks);
     if (pkSet.size === 0) return [];
-
-    // Primary pool: "ok" quality picks from selected games.
-    // Fallback pool: also includes "partial" quality when the primary pool is
-    // too small to assemble any parlay.
-    const pool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality === "ok");
-    // Wider pool used if the strict pool cannot fill a 2-leg minimum.
-    const poolWide = pool.length >= 2
-      ? pool
+    const strictPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality === "ok" && p.recommended);
+    const fallbackPool = strictPool.length >= 2
+      ? strictPool
       : predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing");
-    if (poolWide.length === 0) return [];
+    if (fallbackPool.length < 2) return [];
 
-    const rankPool = (src) =>
-      [...src]
-        .map((p) => ({ ...p, _legProb: legProbabilityFor(p) }))
-        .map((p) => ({ ...p, _tier: tierForPrediction(p) }))
-        .sort((a, b) => b._legProb - a._legProb || (b.rec_score ?? 0) - (a.rec_score ?? 0) || (b.confidence ?? 0) - (a.confidence ?? 0));
+    const ranked = [...fallbackPool]
+      .map((p) => {
+        const legProb = legProbabilityFor(p);
+        const impliedProb = impliedProbForPrediction(p);
+        const edge = legProb - impliedProb;
+        return {
+          ...p,
+          _legProb: legProb,
+          _impliedProb: impliedProb,
+          _edge: edge,
+          _tier: tierForPrediction(p),
+        };
+      })
+      .sort((a, b) =>
+        b._edge - a._edge ||
+        b._legProb - a._legProb ||
+        (b.rec_score ?? 0) - (a.rec_score ?? 0) ||
+        (b.confidence ?? 0) - (a.confidence ?? 0)
+      )
+      .slice(0, MAX_RANKED_POOL_SIZE);
 
-    const ranked = rankPool(poolWide);
+    const candidates = [];
+    const legSizes = [2, 3, 4, 5].filter((size) => size <= ranked.length);
 
-    const parlays = [];
-    const usedPlayers = new Set();
-
-    // When the user has selected fewer games than parlay legs we must allow
-    // multiple picks from the same game.  The formula scales maxPerGame up so
-    // that the product (numGames × maxPerGame) always covers the target leg
-    // count, while keeping the classic limit of 1 when ≥4 games are selected.
-    const adaptiveMax = (targetLegs) =>
-      Math.max(1, Math.ceil(targetLegs / Math.min(pkSet.size, targetLegs)));
-
-    // 4-Leg A — safer profile markets, with adaptive per-game limit
-    const maxA = adaptiveMax(4);
-    // LEG_PROB_FLOOR: slightly relaxed vs the legacy 0.48 to include more picks
-    // when a small number of games are selected (fewer candidates available).
-    // 0.46 ≈ 46% leg probability, still above the breakeven for -120 juice (~0.45).
-    const legProbFloor = 0.46;
-    const candsA = ranked.filter(
-      (p) => ["hit_2", "hrr_2", "hrr_3", "strikeouts", "total_bases"].includes(p.market) && p._legProb >= legProbFloor
-    );
-    const legsA = pickTierMix(
-      candsA,
-      4,
-      [{ tier: "s", count: 1 }, { tier: "a", count: 2 }, { tier: "b", count: 1 }],
-      { maxPerGame: maxA, maxPerPlayer: 1, bannedPlayerIds: usedPlayers }
-    ).map((p) => toLeg(p, `high-floor core (tier ${String(p._tier).toUpperCase()})`));
-    const parA = assembleParlay("4-Leg A", "4 legs from safer profile markets (2+ hit / HRR / K / TB), diversified by game.", legsA, 4);
-    if (parA) { parlays.push(parA); for (const l of parA.legs) usedPlayers.add(l.playerId); }
-
-    // 4-Leg B — market diversity, with adaptive per-game limit
-    const maxB = adaptiveMax(4);
-    const tierPriority = { s: 0, a: 1, b: 2, c: 3 };
-    const marketRanked = [...ranked].sort((a, b) =>
-      (tierPriority[a._tier] - tierPriority[b._tier]) || (b._legProb - a._legProb) || ((b.rec_score ?? 0) - (a.rec_score ?? 0))
-    );
-    const legsBPool = [];
-    const seenMarketsB = new Set();
-    const gameTallyB = new Map(); // tracks picks per game to respect adaptive limit
-    const seenIdsB = new Set();
-    for (const p of marketRanked) {
-      if (legsBPool.length >= 4) break;
-      if (usedPlayers.has(p.player_id)) continue;
-      if (seenMarketsB.has(p.market)) continue;
-      if ((gameTallyB.get(p.game_pk) ?? 0) >= maxB) continue;
-      legsBPool.push(p);
-      seenMarketsB.add(p.market);
-      gameTallyB.set(p.game_pk, (gameTallyB.get(p.game_pk) ?? 0) + 1);
-      seenIdsB.add(p.id);
-    }
-    if (legsBPool.length < 4) {
-      for (const p of ranked) {
-        if (legsBPool.length >= 4) break;
-        if (usedPlayers.has(p.player_id)) continue;
-        if (seenIdsB.has(p.id)) continue;
-        if ((gameTallyB.get(p.game_pk) ?? 0) >= maxB) continue;
-        legsBPool.push(p);
-        gameTallyB.set(p.game_pk, (gameTallyB.get(p.game_pk) ?? 0) + 1);
-        seenIdsB.add(p.id);
+    const buildCombos = (size, start = 0, chosen = [], byGame = new Map(), byPlayer = new Map(), familyCount = new Map()) => {
+      // Cap candidates at MAX_CANDIDATE_PARLAYS to keep combo search responsive in-browser.
+      if (candidates.length >= MAX_CANDIDATE_PARLAYS) return;
+      if (chosen.length === size) {
+        const legs = chosen.map((pick) => toLeg(pick, `auto-ranked ${size}-leg combination`));
+        const parlay = assembleParlay(`${size}-Leg Candidate`, `${size}-leg portfolio optimized for EV/confidence/correlation.`, legs, size);
+        if (!parlay) return;
+        const enriched = enrichParlayRanking(parlay, chosen);
+        // Drop cards below MIN_PARLAY_EV; keep mild negatives so low-volume slates still produce options.
+        if (enriched.ev < MIN_PARLAY_EV) return;
+        candidates.push(enriched);
+        return;
       }
-    }
-    const legsB = legsBPool.map((p) => toLeg(p, `balanced market mix (tier ${String(p._tier).toUpperCase()})`));
-    const parB = assembleParlay("4-Leg B", "4 legs with market diversity and one-game separation.", legsB, 4);
-    if (parB) { parlays.push(parB); for (const l of parB.legs) usedPlayers.add(l.playerId); }
 
-    // 5-Leg
-    const max5 = adaptiveMax(5);
-    const cands5 = ranked.filter((p) => p._legProb >= legProbFloor);
-    let legs5 = pickTierMix(
-      cands5, 5,
-      [{ tier: "s", count: 1 }, { tier: "a", count: 2 }, { tier: "b", count: 2 }],
-      { maxPerGame: max5, maxPerPlayer: 1, bannedPlayerIds: usedPlayers }
-    );
-    if (legs5.length < 5) {
-      legs5 = pickTierMix(
-        cands5, 5,
-        [{ tier: "s", count: 1 }, { tier: "a", count: 2 }, { tier: "b", count: 2 }],
-        { maxPerGame: max5, maxPerPlayer: 1 }
-      );
-    }
-    const par5 = assembleParlay(
-      "5-Leg", "5-leg leverage parlay.",
-      legs5.map((p) => toLeg(p, `leverage leg (tier ${String(p._tier).toUpperCase()})`)), 5
-    );
-    if (par5) parlays.push(par5);
+      for (let i = start; i < ranked.length; i++) {
+        const pick = ranked[i];
+        const maxPerGame = adaptiveMaxPerGame(pkSet.size, size);
+        if ((byGame.get(pick.game_pk) ?? 0) >= maxPerGame) continue;
+        if ((byPlayer.get(pick.player_id) ?? 0) >= 1) continue;
+        const family = marketFamily(pick.market);
+        if ((familyCount.get(family) ?? 0) >= MAX_PICKS_PER_FAMILY) continue;
+        if (pick._edge < MIN_PICK_EDGE) continue;
 
-    // ── Fallback: guarantee at least one 2-leg parlay when enough picks exist
-    // This triggers when strict 4/5-leg assembly produced nothing but there are
-    // still ≥2 eligible picks in the selected games.
-    if (parlays.length === 0 && ranked.length >= 2) {
-      // Relaxed pool: no additional legProb floor applied beyond what rankPool
-      // already guarantees (data_quality filter only).  This intentionally
-      // allows picks that failed the 0.46 floor above — the goal here is to
-      // guarantee at least one parlay is returned when the user selected games.
-      const maxFallback = adaptiveMax(2);
-      const fallbackLegs = pickTierMix(
-        ranked, 2,
-        [{ tier: "s", count: 1 }, { tier: "a", count: 1 }, { tier: "b", count: 1 }, { tier: "c", count: 1 }],
-        { maxPerGame: maxFallback, maxPerPlayer: 1 }
-      );
-      const parFallback = assembleParlay(
-        "Best Available 2-Leg",
-        "2-leg parlay from the top available picks in selected games.",
-        fallbackLegs.map((p) => toLeg(p, `best available (tier ${String(p._tier).toUpperCase()})`)),
-        2
-      );
-      if (parFallback) parlays.push(parFallback);
-    }
+        byGame.set(pick.game_pk, (byGame.get(pick.game_pk) ?? 0) + 1);
+        byPlayer.set(pick.player_id, (byPlayer.get(pick.player_id) ?? 0) + 1);
+        familyCount.set(family, (familyCount.get(family) ?? 0) + 1);
+        chosen.push(pick);
+        buildCombos(size, i + 1, chosen, byGame, byPlayer, familyCount);
+        chosen.pop();
+        byGame.set(pick.game_pk, (byGame.get(pick.game_pk) ?? 1) - 1);
+        byPlayer.set(pick.player_id, (byPlayer.get(pick.player_id) ?? 1) - 1);
+        familyCount.set(family, (familyCount.get(family) ?? 1) - 1);
+      }
+    };
 
-    return parlays;
+    legSizes.forEach((size) => buildCombos(size));
+
+    const rankedParlays = dedupeAndRankParlays(candidates, 9).map((parlay, idx) => ({
+      ...parlay,
+      name: `Best ${parlay.legs.length}-Leg #${idx + 1}`,
+      strategy: `Ranked by EV (${(parlay.ev * 100).toFixed(1)}%), confidence (${(parlay.avgConfidence ?? 0).toFixed(1)}), and low correlation (${(parlay.correlation * 100).toFixed(1)}%).`,
+    }));
+
+    if (rankedParlays.length > 0) return rankedParlays;
+
+    const fallbackLegs = ranked.slice(0, 2).map((p) => toLeg(p, "best available fallback legs"));
+    const fallback = assembleParlay("Best Available 2-Leg", "Fallback 2-leg parlay when larger combinations are unavailable.", fallbackLegs, 2);
+    return fallback ? [enrichParlayRanking(fallback, ranked.slice(0, 2))] : [];
   }
 
   // ── Legacy time-window mode (Review page backward compat) ──────────────
@@ -744,6 +810,7 @@ export function buildCustomParlay(selectedPicks, name) {
     market: p.market,
     gamePk: p.game_pk,
     legProb: legProbabilityFor(p),
+    impliedProb: impliedProbForPrediction(p),
     projection: p.projection,
     confidence: p.confidence,
     tier: null,

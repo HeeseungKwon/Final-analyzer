@@ -27,6 +27,38 @@ const LEAGUE = {
   pitcherHrPerBF: 0.032,
 };
 
+const MARKET_IMPLIED_BASELINE = {
+  hit_2: 0.33,
+  total_bases: 0.53,
+  hrr_2: 0.56,
+  hrr_3: 0.34,
+  home_run: 0.14,
+  strikeouts: 0.46,
+};
+
+const HITTER_SIM_BLEND = {
+  hit_2: 0.32,
+  total_bases: 0.28,
+  home_run: 0.26,
+  hrr_2: 0.3,
+  hrr_3: 0.28,
+};
+
+const COHERENCE_MIN_GAP = {
+  total_bases_vs_hit_2: 0.01,
+  hrr_2_vs_hit_2: 0.025,
+  hrr_2_vs_hrr_3: 0.02,
+};
+
+const RECOMMENDATION_RULES = {
+  home_run: { scoreMin: 50, minEdge: -0.03 },
+  hitter_other: { scoreMin: 49, minEdge: -0.025 },
+  strikeouts: { scoreMin: 54, minEdge: -0.025 },
+};
+
+const HITTER_SIM_TRIALS = 900;
+const POISSON_MAX_ITERATIONS = 40;
+
 const FRAMEWORK_PROBABILITY_MARKETS = new Set([
   "hit_1",
   ...Object.entries(MARKET_PROJECTION_UNIT)
@@ -58,6 +90,180 @@ function blend(season, recent, wRecent = 0.35) {
 function toConfidence(prob, anchor = 0.5, slope = 130) {
   const c = 50 + slope * (prob - anchor);
   return clamp(c, 0, 100);
+}
+
+function hashSeed(input) {
+  let h = 2166136261;
+  const str = String(input ?? "");
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) || 1;
+}
+
+function makeRng(seed) {
+  let t = seed >>> 0;
+  return () => {
+    t += 0x6D2B79F5;
+    let x = t;
+    x = Math.imul(x ^ (x >>> 15), x | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function normalFromRng(rng) {
+  const u1 = Math.max(1e-9, rng());
+  const u2 = Math.max(1e-9, rng());
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
+function poissonSample(lambda, rng) {
+  const l = Math.max(0, lambda);
+  if (l <= 0) return 0;
+  if (l > 18) {
+    return Math.max(0, Math.round(l + Math.sqrt(l) * normalFromRng(rng)));
+  }
+  const threshold = Math.exp(-l);
+  let p = 1;
+  let k = 0;
+  while (p > threshold && k < POISSON_MAX_ITERATIONS) {
+    p *= rng();
+    k += 1;
+  }
+  return Math.max(0, k - 1);
+}
+
+function impliedMarketProb(market, features = {}) {
+  if (market === "home_run" && Number.isFinite(features.vegasHrProb)) {
+    return clamp(features.vegasHrProb, 0.02, 0.7);
+  }
+  return MARKET_IMPLIED_BASELINE[market] ?? 0.5;
+}
+
+function variancePenalty(floor, ceiling) {
+  const spread = Math.max(0, Number(ceiling ?? 0) - Number(floor ?? 0));
+  return clamp(spread / 0.35, 0, 1);
+}
+
+function confidenceFromSignals({
+  market,
+  prob,
+  floor,
+  ceiling,
+  impliedProb,
+  agreement,
+  edge,
+  historicalReliability,
+  matchupQuality,
+  lineupQuality,
+  recentForm,
+}) {
+  const modelConfidence = toConfidence(prob, impliedProb, market === "home_run" ? 260 : 155);
+  const score =
+    modelConfidence * 0.33 +
+    clamp(edge * 100, -12, 18) * 1.55 +
+    agreement * 13 +
+    historicalReliability * 11 +
+    matchupQuality * 9 +
+    lineupQuality * 7 +
+    recentForm * 7 -
+    variancePenalty(floor, ceiling) * 14;
+  return clamp(score, 0, 100);
+}
+
+function simulateHitterMarkets({
+  name,
+  expectedAB,
+  expectedPA,
+  hitRateAdj,
+  hrPerPAAdj,
+  tbPerPAAdj,
+  hrrPerPAAdj,
+}) {
+  const seedParts = [name, expectedAB, expectedPA.toFixed(2), hitRateAdj.toFixed(4), hrrPerPAAdj.toFixed(4)];
+  const rng = makeRng(hashSeed(seedParts.join("|")));
+  // 900 trials was calibrated as the smallest count that keeps ordering stable
+  // across repeated runs while keeping full-slate analysis latency practical.
+  const trials = HITTER_SIM_TRIALS;
+  let hit2 = 0;
+  let tb2 = 0;
+  let hrr2 = 0;
+  let hrr3 = 0;
+  let hr1 = 0;
+  const hrrSamples = [];
+
+  for (let i = 0; i < trials; i++) {
+    const gameFactor = normalFromRng(rng);
+    const hitP = clamp(hitRateAdj * (1 + gameFactor * 0.16), 0.06, 0.7);
+    const hrP = clamp(hrPerPAAdj * (1 + gameFactor * 0.22), 0.001, 0.5);
+    const hrrRate = clamp(hrrPerPAAdj * (1 + gameFactor * 0.12), 0.05, 1.7);
+    const tbRate = clamp(tbPerPAAdj * (1 + gameFactor * 0.11), 0.05, 1.6);
+
+    let hits = 0;
+    for (let ab = 0; ab < expectedAB; ab++) {
+      if (rng() < hitP) hits += 1;
+    }
+
+    let hr = 0;
+    for (let pa = 0; pa < expectedPA; pa++) {
+      if (rng() < hrP) hr += 1;
+    }
+
+    const tbExtra = poissonSample(Math.max(0, tbRate * expectedPA - hits), rng);
+    const totalBases = hits + tbExtra + hr;
+    const runsRbi = poissonSample(Math.max(0.1, hrrRate * expectedPA - hits), rng);
+    const hrr = hits + runsRbi;
+    hrrSamples.push(hrr);
+
+    if (hits >= 2) hit2 += 1;
+    if (totalBases >= 2) tb2 += 1;
+    if (hrr >= 2) hrr2 += 1;
+    if (hrr >= 3) hrr3 += 1;
+    if (hr >= 1) hr1 += 1;
+  }
+
+  hrrSamples.sort((a, b) => a - b);
+  const p10 = hrrSamples[Math.floor(trials * 0.1)] ?? 0;
+  const p90 = hrrSamples[Math.floor(trials * 0.9)] ?? 0;
+
+  return {
+    hit_2: hit2 / trials,
+    total_bases: tb2 / trials,
+    hrr_2: hrr2 / trials,
+    hrr_3: hrr3 / trials,
+    home_run: hr1 / trials,
+    hrrSpread: clamp((p90 - p10) / 6, 0, 1),
+  };
+}
+
+function enforceHitterCoherence(out) {
+  const byMarket = new Map(out.map((row) => [row.market, row]));
+  const hit2 = byMarket.get("hit_2");
+  const tb2 = byMarket.get("total_bases");
+  const hrr2 = byMarket.get("hrr_2");
+  const hrr3 = byMarket.get("hrr_3");
+
+  if (hit2 && tb2) {
+    const minTb = clamp(hit2.projection + COHERENCE_MIN_GAP.total_bases_vs_hit_2, hit2.projection, 0.995);
+    tb2.projection = Math.max(tb2.projection, minTb);
+    tb2.floor = Math.max(tb2.floor, hit2.floor);
+    tb2.ceiling = Math.max(tb2.ceiling, tb2.projection);
+  }
+
+  if (hit2 && hrr2) {
+    const minHrr2 = clamp(hit2.projection + COHERENCE_MIN_GAP.hrr_2_vs_hit_2, hit2.projection, 0.995);
+    hrr2.projection = Math.max(hrr2.projection, minHrr2);
+    hrr2.floor = Math.max(hrr2.floor, hit2.floor);
+    hrr2.ceiling = Math.max(hrr2.ceiling, hrr2.projection);
+  }
+
+  if (hrr2 && hrr3) {
+    hrr3.projection = Math.min(hrr3.projection, Math.max(0.01, hrr2.projection - COHERENCE_MIN_GAP.hrr_2_vs_hrr_3));
+    hrr3.floor = Math.min(hrr3.floor, hrr3.projection);
+    hrr3.ceiling = Math.min(hrr3.ceiling, hrr2.ceiling);
+  }
 }
 
 function empiricalBayesRate(successes, trials, priorMean, priorStrength) {
@@ -264,6 +470,15 @@ export function scoreHitter(name, ctx) {
   const hrPerPAAdj = clamp(hrPerPA * pitcherHrMult * parkHrMult * hrFormMult, 0.004, 0.16);
   const tbPerPAAdj = clamp(tbPerPA * contactMult * clamp(1 + (parkFactor - 100) / 100 * 0.15, 0.9, 1.1), 0.18, 0.95);
   const hrrPerPAAdj = clamp(hrrPerPA * contactMult, 0.18, 0.95);
+  const sim = simulateHitterMarkets({
+    name,
+    expectedAB,
+    expectedPA,
+    hitRateAdj,
+    hrPerPAAdj,
+    tbPerPAAdj,
+    hrrPerPAAdj,
+  });
 
   const triggers = [];
   if (hrPerPARecent != null && hrPerPARecent > hrPerPASeason + 0.012) triggers.push("HR form up");
@@ -291,7 +506,7 @@ export function scoreHitter(name, ctx) {
       floor,
       ceiling,
     });
-    const pFinal = ensemble.projection;
+    const pFinal = clamp(ensemble.projection * (1 - HITTER_SIM_BLEND.hit_2) + sim.hit_2 * HITTER_SIM_BLEND.hit_2, 0, 1);
     out.push({
       market: "hit_2",
       confidence: toConfidence(pFinal, 0.27, 170),
@@ -307,6 +522,7 @@ export function scoreHitter(name, ctx) {
         pOverLine: pFinal,
         modelAgreement: ensemble.agreement,
         framework: ensemble.components,
+        monteCarloProb: sim.hit_2,
       }),
       dataQuality: dqBase,
       recommended: false,
@@ -339,7 +555,7 @@ export function scoreHitter(name, ctx) {
       floor,
       ceiling,
     });
-    const pFinal = ensemble.projection;
+    const pFinal = clamp(ensemble.projection * (1 - HITTER_SIM_BLEND.home_run) + sim.home_run * HITTER_SIM_BLEND.home_run, 0, 1);
 
     let verdict;
     let verdictNote;
@@ -404,7 +620,11 @@ export function scoreHitter(name, ctx) {
       ceiling: ceilingCount,
     });
     const lambdaFinal = ensemble.projection;
-    const pOver15 = poissonAtLeast(lambdaFinal, 2);
+    const pOver15 = clamp(
+      poissonAtLeast(lambdaFinal, 2) * (1 - HITTER_SIM_BLEND.total_bases) + sim.total_bases * HITTER_SIM_BLEND.total_bases,
+      0,
+      1
+    );
     out.push({
       market: "total_bases",
       confidence: toConfidence(pOver15, 0.5, 140),
@@ -421,6 +641,7 @@ export function scoreHitter(name, ctx) {
         tbOver1_5Prob: pOver15,
         modelAgreement: ensemble.agreement,
         framework: ensemble.components,
+        monteCarloProb: sim.total_bases,
       }),
       dataQuality: dqBase,
       recommended: false,
@@ -446,8 +667,8 @@ export function scoreHitter(name, ctx) {
       ceiling: ceilingCount,
     });
     const lambdaFinal = ensemble.projection;
-    const pOver15 = poissonAtLeast(lambdaFinal, 2);
-    const pOver25 = poissonAtLeast(lambdaFinal, 3);
+    const pOver15 = clamp(poissonAtLeast(lambdaFinal, 2) * (1 - HITTER_SIM_BLEND.hrr_2) + sim.hrr_2 * HITTER_SIM_BLEND.hrr_2, 0, 1);
+    const pOver25 = clamp(poissonAtLeast(lambdaFinal, 3) * (1 - HITTER_SIM_BLEND.hrr_3) + sim.hrr_3 * HITTER_SIM_BLEND.hrr_3, 0, 1);
     out.push({
       market: "hrr_2",
       confidence: toConfidence(pOver15, 0.5, 145),
@@ -464,6 +685,8 @@ export function scoreHitter(name, ctx) {
         hrrOver1_5Prob: pOver15,
         modelAgreement: ensemble.agreement,
         framework: ensemble.components,
+        monteCarloProb: sim.hrr_2,
+        monteCarloSpread: sim.hrrSpread,
       }),
       dataQuality: dqBase,
       recommended: false,
@@ -485,6 +708,8 @@ export function scoreHitter(name, ctx) {
         hrrOver2_5Prob: pOver25,
         modelAgreement: ensemble.agreement,
         framework: ensemble.components,
+        monteCarloProb: sim.hrr_3,
+        monteCarloSpread: sim.hrrSpread,
       }),
       dataQuality: dqBase,
       recommended: false,
@@ -492,9 +717,43 @@ export function scoreHitter(name, ctx) {
     });
   }
 
+  enforceHitterCoherence(out);
+
+  const historicalReliability = clamp((seasonPA + recentPA * 0.85) / 260, 0, 1);
+  const lineupQuality = clamp((expectedPA - 3.4) / 1.4, 0, 1);
+  const matchupQuality = clamp((contactMult - 0.9) / 0.28, 0, 1);
+  const recentForm = clamp(0.5 + recentHrDelta * 1.5, 0, 1);
+
   for (const s of out) {
-    const pOver = s.features?.pOverLine ?? (s.market === "hit_2" || s.market === "home_run" ? s.projection : 0.5);
+    const pOver = Number.isFinite(s.projection) ? s.projection : (s.features?.pOverLine ?? 0.5);
     const agreement = Number(s.features?.modelAgreement ?? 0.5);
+    const impliedProb = impliedMarketProb(s.market, s.features ?? {});
+    const edge = pOver - impliedProb;
+    s.features = {
+      ...(s.features ?? {}),
+      pOverLine: pOver,
+      impliedMarketProb: impliedProb,
+      modelEdge: edge,
+      historicalReliability,
+      matchupQuality,
+      lineupQuality,
+      recentForm,
+      variancePenalty: variancePenalty(s.floor, s.ceiling),
+    };
+    s.confidence = confidenceFromSignals({
+      market: s.market,
+      prob: pOver,
+      floor: s.floor,
+      ceiling: s.ceiling,
+      impliedProb,
+      agreement,
+      edge,
+      historicalReliability,
+      matchupQuality,
+      lineupQuality,
+      recentForm,
+    });
+
     if (s.market === "home_run") {
       const liftVsPark = s.features?.liftVsPark ?? 0;
       const certainty = Math.max(0, 1 - (s.ceiling - s.floor) * 3.5);
@@ -502,22 +761,24 @@ export function scoreHitter(name, ctx) {
       // MIDDLING verdict = model sits between baselines → potential hidden edge
       const verdictBonus = s.verdict === "strong" ? 8 : s.verdict === "middling" ? 4 : 0;
       const recScore =
-        s.confidence * 0.42 +
-        pOver * 34 +
+        s.confidence * 0.36 +
+        pOver * 28 +
+        Math.max(-0.08, edge) * 100 * 0.38 +
         Math.max(0, liftVsPark) * 110 +
         Math.max(0, s.triggerStrength) * 14 +
         certainty * 10 +
         verdictBonus;
       s.recScore = clamp(recScore, 0, 100);
-      s.recommended = s.recScore >= 52 && s.dataQuality !== "missing";
+      s.recommended = s.recScore >= RECOMMENDATION_RULES.home_run.scoreMin && s.dataQuality !== "missing" && edge > RECOMMENDATION_RULES.home_run.minEdge;
     } else {
       const recScore =
-        s.confidence * 0.5 +
-        pOver * 30 +
-        Math.max(0, s.triggerStrength) * 18 +
-        agreement * 7;
+        s.confidence * 0.42 +
+        pOver * 24 +
+        Math.max(-0.08, edge) * 100 * 0.42 +
+        Math.max(0, s.triggerStrength) * 15 +
+        agreement * 8;
       s.recScore = clamp(recScore, 0, 100);
-      s.recommended = s.recScore >= 50 && s.dataQuality !== "missing";
+      s.recommended = s.recScore >= RECOMMENDATION_RULES.hitter_other.scoreMin && s.dataQuality !== "missing" && edge > RECOMMENDATION_RULES.hitter_other.minEdge;
     }
   }
 
@@ -553,6 +814,10 @@ export function scorePitcher(name, ctx) {
   });
   const lambdaFinal = ensemble.projection;
   const pOver = poissonAtLeast(lambdaFinal, 7);
+  const historicalReliability = clamp(((st.bf ?? 0) + (st.gs ?? 0) * 18) / 520, 0, 1);
+  const matchupQuality = clamp((matchupMult - 0.85) / 0.35, 0, 1);
+  const impliedProb = impliedMarketProb("strikeouts");
+  const edge = pOver - impliedProb;
 
   const trigger =
     oppK > leagueK + 0.02
@@ -564,7 +829,19 @@ export function scorePitcher(name, ctx) {
 
   const pick = {
     market: "strikeouts",
-    confidence: toConfidence(pOver, 0.35, 170),
+    confidence: confidenceFromSignals({
+      market: "strikeouts",
+      prob: pOver,
+      floor: poissonAtLeast(floorCount, 7),
+      ceiling: poissonAtLeast(ceilingCount, 7),
+      impliedProb,
+      agreement: ensemble.agreement,
+      edge,
+      historicalReliability,
+      matchupQuality,
+      lineupQuality: 0.5,
+      recentForm: 0.5,
+    }),
     projection: lambdaFinal,
     floor: floorCount,
     ceiling: ceilingCount,
@@ -577,6 +854,10 @@ export function scorePitcher(name, ctx) {
       expectedIP,
       expectedBF,
       pOverLine: pOver,
+      impliedMarketProb: impliedProb,
+      modelEdge: edge,
+      historicalReliability,
+      matchupQuality,
       era: st.era,
       whip: st.whip,
       modelAgreement: ensemble.agreement,
@@ -588,14 +869,15 @@ export function scorePitcher(name, ctx) {
   };
 
   pick.recScore = clamp(
-    pick.confidence * 0.52 +
-      pOver * 32 +
+    pick.confidence * 0.42 +
+      pOver * 26 +
+      Math.max(-0.08, edge) * 100 * 0.46 +
       Math.max(0, pick.triggerStrength) * 12 +
       Number(pick.features?.modelAgreement ?? 0.5) * 8,
     0,
     100
   );
-  pick.recommended = pick.recScore >= 55 && pick.dataQuality !== "missing";
+  pick.recommended = pick.recScore >= RECOMMENDATION_RULES.strikeouts.scoreMin && pick.dataQuality !== "missing" && edge > RECOMMENDATION_RULES.strikeouts.minEdge;
 
   return [pick];
 }
