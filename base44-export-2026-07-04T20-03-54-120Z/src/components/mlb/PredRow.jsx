@@ -11,24 +11,17 @@ import { computePickGrade, gradeColorClass } from "@/lib/utils/pickGrade";
  * 
  * Features:
  * - Confidence color-coding
- * - Verdict badges for HR picks (STRONG, MIDDLING)
+ * - Edge-grade badges
  * - Expandable section showing:
- *   * Floor/ceiling percentile bands
- *   * Trigger strength (matchup indicator)
- *   * Recommendation score breakdown
- *   * Data quality
- *   * Vegas vs Park probability comparison (for HR)
- *   * Multi-source evidence scoring
- * 
- * This gives users full visibility into recommendation logic:
- * - Not just confidence, but full evidence backing each pick
- * - Transparent comparison to Vegas and ballpark baselines
- * - Helps build trust in the model through explainability
+ *   * Market odds and implied probability
+ *   * Model probability and edge
+ *   * EV / ROI / Kelly stake sizing
+ *   * Floor/ceiling percentile band and data quality
  */
 
 function fmt(n, digits = 2) {
   const v = Number(n);
-  if (!isFinite(v)) return "—";
+  if (!Number.isFinite(v)) return "—";
   return v.toFixed(digits);
 }
 
@@ -47,15 +40,27 @@ function confidenceColor(c) {
  */
 function verdictColor(verdict) {
   switch (verdict) {
-    case "strong":
+    case "recommended":
       return "border-emerald-500 text-emerald-600 bg-emerald-50";
-    case "middling":
+    case "marginal":
       return "border-blue-500 text-blue-600 bg-blue-50";
-    case "fade":
+    case "avoid":
       return "border-red-500 text-red-600 bg-red-50";
     default:
       return "border-muted-foreground text-muted-foreground";
   }
+}
+
+function fmtPct(n, digits = 1) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "—";
+  return `${(v * 100).toFixed(digits)}%`;
+}
+
+function fmtAmerican(odds) {
+  const value = Number(odds);
+  if (!Number.isFinite(value) || value === 0) return "—";
+  return value > 0 ? `+${value}` : `${value}`;
 }
 
 export default function PredRow({ p, expanded, onToggle }) {
@@ -68,9 +73,15 @@ export default function PredRow({ p, expanded, onToggle }) {
    * Extract probability sources for display
    * Shows model vs Vegas vs ballpark comparison
    */
-  const modelProb = p.projection;
-  const vegasProb = features?.vegasHrProb ?? null;
-  const parkProb = features?.parkHrProb ?? null;
+  const modelProb = features?.modelProbability ?? p.projection;
+  const impliedProb = features?.impliedProbability ?? features?.impliedMarketProb ?? null;
+  const marketOdds = features?.marketOdds ?? null;
+  const edge = features?.edge ?? features?.modelEdge ?? null;
+  const roi = features?.roi ?? null;
+  const expectedValue = features?.expectedValue ?? null;
+  const kellyFraction = features?.kellyFraction ?? null;
+  const recommendedStake = features?.recommendedStake ?? null;
+  const marketLine = features?.marketLine ?? null;
   const tbOver15Prob = features?.tbOver1_5Prob;
   const hrrOver15Prob = features?.hrrOver1_5Prob;
   const hrrOver25Prob = features?.hrrOver2_5Prob;
@@ -106,19 +117,12 @@ export default function PredRow({ p, expanded, onToggle }) {
           <div className="flex items-center justify-end gap-1">
             {/* Pick grade badge */}
             <span
-              title={`Grade score: ${numericGrade}`}
+              title={`Edge: ${numericGrade > 0 ? "+" : ""}${numericGrade} pts`}
               className={"inline-block rounded px-1.5 py-0.5 text-xs font-bold tabular-nums " + gradeColorClass(letterGrade)}
             >
               {letterGrade}
             </span>
             {p.recommended && <Badge className="bg-emerald-600 hover:bg-emerald-600 text-[10px]">REC</Badge>}
-            {/* HR Pick Verdicts */}
-            {p.market === "home_run" && p.verdict === "strong" && (
-              <Badge variant="outline" className="border-emerald-500 text-emerald-600 text-[10px]">STRONG</Badge>
-            )}
-            {p.market === "home_run" && p.verdict === "middling" && (
-              <Badge variant="outline" className="border-blue-500 text-blue-600 text-[10px]">MIDDLING</Badge>
-            )}
             {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
           </div>
         </TableCell>
@@ -142,8 +146,10 @@ export default function PredRow({ p, expanded, onToggle }) {
                   <div className="font-semibold tabular-nums">{fmt(p.trigger_strength, 2)}</div>
                 </div>
                 <div>
-                  <div className="text-muted-foreground">Rec Score</div>
-                  <div className="font-semibold tabular-nums">{fmt(p.rec_score, 1)}</div>
+                  <div className="text-muted-foreground">Edge</div>
+                  <div className="font-semibold tabular-nums">
+                    {edge == null ? "—" : `${Number(edge) > 0 ? "+" : ""}${fmt(Number(edge) * 100, 1)} pts`}
+                  </div>
                 </div>
                 <div>
                   <div className="text-muted-foreground">Data Quality</div>
@@ -151,11 +157,47 @@ export default function PredRow({ p, expanded, onToggle }) {
                 </div>
               </div>
 
-              {/* Verdict & Trigger Note */}
+              {(modelProb != null || impliedProb != null || marketOdds != null) && (
+                <div className="border-t border-border/40 pt-2">
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Market vs Model</div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                    <div>
+                      <div className="text-muted-foreground">Sportsbook Odds</div>
+                      <div className="font-semibold tabular-nums">
+                        {fmtAmerican(marketOdds)}
+                        {marketLine != null ? ` @ ${Number(marketLine).toFixed(1)}` : ""}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">Implied Probability</div>
+                      <div className="font-semibold tabular-nums">{fmtPct(impliedProb)}</div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">Model Probability</div>
+                      <div className="font-semibold tabular-nums">{fmtPct(modelProb)}</div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">EV (1u stake)</div>
+                      <div className="font-semibold tabular-nums">{fmt(expectedValue, 3)}</div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">ROI</div>
+                      <div className="font-semibold tabular-nums">{Number.isFinite(Number(roi)) ? `${Number(roi).toFixed(1)}%` : "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">Kelly / Stake</div>
+                      <div className="font-semibold tabular-nums">
+                        {fmtPct(kellyFraction)} / {fmtPct(recommendedStake)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {p.verdict && (
                 <div className="border-t border-border/40 pt-2">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-muted-foreground">Verdict:</span>
+                    <span className="text-muted-foreground">Status:</span>
                     <Badge variant="outline" className={"text-[10px] " + verdictColor(p.verdict)}>
                       {p.verdict.toUpperCase()}
                     </Badge>
@@ -170,49 +212,13 @@ export default function PredRow({ p, expanded, onToggle }) {
                 </div>
               )}
 
-              {/* Multi-Source Probability Comparison (HR only) */}
-              {p.market === "home_run" && (modelProb != null || vegasProb != null || parkProb != null) && (
-                <div className="border-t border-border/40 pt-2">
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Probability Sources</div>
-                  <div className="space-y-1 text-xs">
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">Our Model:</span>
-                      <span className="font-semibold tabular-nums">{fmt(modelProb * 100, 1)}%</span>
-                    </div>
-                    {parkProb != null && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">Park Baseline:</span>
-                        <span className="tabular-nums">{fmt(parkProb * 100, 1)}%</span>
-                      </div>
-                    )}
-                    {vegasProb != null && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">Vegas Implied:</span>
-                        <span className="tabular-nums">{fmt(vegasProb * 100, 1)}%</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="mt-2 p-1.5 bg-muted/50 rounded text-[10px] leading-relaxed">
-                    {p.verdict === "strong" && (
-                      <span className="text-emerald-700 dark:text-emerald-400 font-medium">✓ STRONG: Model beats both baselines</span>
-                    )}
-                    {p.verdict === "middling" && (
-                      <span className="text-blue-700 dark:text-blue-400 font-medium">◆ MIDDLING: Model between baselines (potential hidden edge)</span>
-                    )}
-                    {p.verdict === "fade" && (
-                      <span className="text-red-700 dark:text-red-400 font-medium">✗ FADE: Model below higher baseline</span>
-                    )}
-                  </div>
-                </div>
-              )}
-
               {/* Feature Breakdown */}
               {Object.keys(features).length > 0 && (
                 <div className="border-t border-border/40 pt-2">
                   <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Features</div>
                   <div className="flex flex-wrap gap-2 text-xs">
                     {Object.entries(features)
-                      .filter(([k]) => !["verdict", "verdictNote", "vegasHrProb", "parkHrProb"].includes(k))
+                      .filter(([k]) => !["verdict", "verdictNote"].includes(k))
                       .map(([k, v]) => (
                         <span key={k} className="rounded bg-muted px-2 py-0.5">
                           <span className="text-muted-foreground">{k}:</span>{" "}

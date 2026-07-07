@@ -215,14 +215,15 @@ export default function Parlays() {
                   <TableHead>Market</TableHead>
                   <TableHead className="text-right">Conf</TableHead>
                   <TableHead className="text-right">Proj</TableHead>
-                  <TableHead className="text-right">Grade</TableHead>
-                  <TableHead className="text-right">Rec Score</TableHead>
+                  <TableHead className="text-right">Edge Grade</TableHead>
+                  <TableHead className="text-right">Edge</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {picks.map((p) => {
                   const picked = customSelectedPickIds.has(p.id);
                   const { letterGrade } = computePickGrade(p);
+                  const edgePts = Number(p.rec_score);
                   return (
                     <TableRow
                       key={p.id}
@@ -250,7 +251,9 @@ export default function Parlays() {
                           {letterGrade}
                         </span>
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{Number(p.rec_score).toFixed(1)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {edgePts > 0 ? "+" : ""}{edgePts.toFixed(1)} pts
+                      </TableCell>
                     </TableRow>
                   );
                 })}

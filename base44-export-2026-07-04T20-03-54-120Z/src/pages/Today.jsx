@@ -77,7 +77,7 @@ export default function Today() {
           <div className="text-xs uppercase tracking-widest text-muted-foreground">Slate</div>
           <h1 className="text-3xl font-black tracking-tight">Today's projections</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Every projected hitter and starting pitcher scored on the same pipeline. Confidence, floor, ceiling, and the trigger behind each pick.
+            Every projected hitter and starting pitcher is now compared against sportsbook implied odds. The app shows all model outputs, but only +5% edge plays are recommended.
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -119,7 +119,7 @@ export default function Today() {
             : "Values are expected counts."}{" "}
           <b className="text-foreground">Floor</b> / <b className="text-foreground">Ceiling</b> are the same unit (10th/90th-percentile band).{" "}
           <b className="text-foreground">Conf</b> is a 0–100 model confidence.{" "}
-          Recommendation uses a market-specific weighting of Floor/Ceiling/Trigger — not confidence alone.
+          Recommendations require sportsbook edge ≥ +5%, confidence ≥ 50, and usable data quality.
         </div>
       )}
 
@@ -169,7 +169,7 @@ export default function Today() {
                             </TableHead>
                             <TableHead className="text-right">Conf</TableHead>
                             <TableHead>Trigger</TableHead>
-                            <TableHead className="text-right">Grade / Rec</TableHead>
+                            <TableHead className="text-right">Edge / Rec</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
