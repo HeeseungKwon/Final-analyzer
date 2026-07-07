@@ -32,12 +32,12 @@ const MARKET_LIMITS = {
 };
 
 const MARKET_MIN_CONFIDENCE = {
-  hit_2: 57,
-  hrr_2: 55,
-  hrr_3: 52,
-  total_bases: 55,
-  home_run: 58,
-  strikeouts: 57,
+  hit_2: 50,
+  hrr_2: 48,
+  hrr_3: 45,
+  total_bases: 48,
+  home_run: 50,
+  strikeouts: 50,
 };
 
 const MARKET_TRUST_BONUS = {
@@ -330,12 +330,13 @@ function topUpRecommendations(rows) {
   // Minimum recommended picks to guarantee per analysis run.
   const MIN_DAILY_PICKS = 50;
 
-  // Relaxed confidence gate for top-up candidates (vs primary gate of 55–58).
-  // Set at 42 to capture near-miss picks that are slightly below the primary
-  // MARKET_MIN_CONFIDENCE thresholds (55–58) but still represent real signal.
+  // Relaxed confidence gate for top-up candidates (vs primary gate range of 45–50).
+  // Set at 38 (7 points below the lowest primary threshold) to capture near-miss
+  // picks that are slightly below MARKET_MIN_CONFIDENCE thresholds (45–50) but still
+  // represent real signal.
   // Picks at this level are treated as "honorable mentions" that only appear
   // when the primary selection falls short of the 50-pick minimum.
-  const TOPUP_MIN_CONFIDENCE = 42;
+  const TOPUP_MIN_CONFIDENCE = 38;
 
   // rec_score threshold for automatic overflow above MIN_DAILY_PICKS.
   // 78 was chosen to sit between the grade-A boundary (72) and grade-S boundary
