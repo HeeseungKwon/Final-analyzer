@@ -90,19 +90,28 @@ const MARKET_WEIGHTS = {
   },
 };
 
-const MARKET_PROBABILITY_CALIBRATION = {
-  "1+ HR": { anchor: 0.10, slope: 300 },
-  "home_run": { anchor: 0.10, slope: 300 },
-  "2+ Hits": { anchor: 0.34, slope: 170 },
-  "2+ Total Bases": { anchor: 0.33, slope: 175 },
-  "3+ Total Bases": { anchor: 0.20, slope: 200 },
-  "2+ HRR": { anchor: 0.30, slope: 180 },
-  "hrr_2": { anchor: 0.30, slope: 180 },
-  "3+ HRR": { anchor: 0.17, slope: 220 },
-  "hrr_3": { anchor: 0.17, slope: 220 },
+const MARKET_PROBABILITY_CALIBRATION_BASE = {
+  hr: { anchor: 0.10, slope: 300 },
+  hits2: { anchor: 0.34, slope: 170 },
+  tb2: { anchor: 0.33, slope: 175 },
+  tb3: { anchor: 0.20, slope: 200 },
+  hrr2: { anchor: 0.30, slope: 180 },
+  hrr3: { anchor: 0.17, slope: 220 },
 };
 
-const DEFAULT_MARKET_PROBABILITY_CALIBRATION = MARKET_PROBABILITY_CALIBRATION["hrr_2"];
+const MARKET_PROBABILITY_CALIBRATION = {
+  "1+ HR": MARKET_PROBABILITY_CALIBRATION_BASE.hr,
+  "home_run": MARKET_PROBABILITY_CALIBRATION_BASE.hr,
+  "2+ Hits": MARKET_PROBABILITY_CALIBRATION_BASE.hits2,
+  "2+ Total Bases": MARKET_PROBABILITY_CALIBRATION_BASE.tb2,
+  "3+ Total Bases": MARKET_PROBABILITY_CALIBRATION_BASE.tb3,
+  "2+ HRR": MARKET_PROBABILITY_CALIBRATION_BASE.hrr2,
+  "hrr_2": MARKET_PROBABILITY_CALIBRATION_BASE.hrr2,
+  "3+ HRR": MARKET_PROBABILITY_CALIBRATION_BASE.hrr3,
+  "hrr_3": MARKET_PROBABILITY_CALIBRATION_BASE.hrr3,
+};
+
+const DEFAULT_MARKET_PROBABILITY_CALIBRATION = { anchor: 0.30, slope: 180 };
 
 const CONFIDENCE_QUALITY_FLOOR = {
   missing: 35,
@@ -322,7 +331,7 @@ export function calculateMarketProjectionScore(
   // Get base metrics
   const marketCalibration = MARKET_PROBABILITY_CALIBRATION[market] ?? DEFAULT_MARKET_PROBABILITY_CALIBRATION;
   const modelProbScore = toConfidence(
-    Number(prediction.projection ?? 0),
+    Number(prediction.projection ?? 0.5),
     marketCalibration.anchor,
     marketCalibration.slope
   );
