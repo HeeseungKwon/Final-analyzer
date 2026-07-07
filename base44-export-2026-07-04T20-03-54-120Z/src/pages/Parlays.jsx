@@ -79,7 +79,6 @@ function ParlayCard({ parlay, selectable, selected, onToggle, onDelete }) {
           <span><b>Legs:</b> {parlay.legs.length}</span>
           <span><b>Break-even @ -120 legs:</b> {(parlay.breakEvenProb * 100).toFixed(1)}%</span>
           {Number.isFinite(parlay.ev) && <span><b>EV:</b> {(parlay.ev * 100).toFixed(1)}%</span>}
-          {Number.isFinite(parlay.avgConfidence) && <span><b>Avg Conf:</b> {Number(parlay.avgConfidence).toFixed(1)}</span>}
           {Number.isFinite(parlay.correlation) && <span><b>Correlation:</b> {(parlay.correlation * 100).toFixed(1)}%</span>}
           <span>
             <b>Edge:</b>{" "}
@@ -93,12 +92,11 @@ function ParlayCard({ parlay, selectable, selected, onToggle, onDelete }) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Player</TableHead>
-                <TableHead>Market</TableHead>
-                <TableHead className="text-right">Leg %</TableHead>
-                <TableHead className="text-right">Conf</TableHead>
-                <TableHead>Reason</TableHead>
-              </TableRow>
+                 <TableHead>Player</TableHead>
+                 <TableHead>Market</TableHead>
+                 <TableHead className="text-right">Leg %</TableHead>
+                 <TableHead>Reason</TableHead>
+               </TableRow>
             </TableHeader>
             <TableBody>
               {parlay.legs.map((l) => (
@@ -108,9 +106,8 @@ function ParlayCard({ parlay, selectable, selected, onToggle, onDelete }) {
                     {l.teamName && <span className="ml-2 text-xs font-normal text-muted-foreground">({l.teamName})</span>}
                   </TableCell>
                   <TableCell>{getMarketLabel(l.market, "short")}</TableCell>
-                  <TableCell className="text-right tabular-nums">{(l.legProb * 100).toFixed(1)}%</TableCell>
-                  <TableCell className="text-right tabular-nums">{Number(l.confidence).toFixed(0)}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{l.reason}</TableCell>
+                   <TableCell className="text-right tabular-nums">{(l.legProb * 100).toFixed(1)}%</TableCell>
+                   <TableCell className="text-xs text-muted-foreground">{l.reason}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -211,12 +208,11 @@ export default function Parlays() {
                 <TableRow>
                   <TableHead className="w-8"></TableHead>
                   <TableHead>Player</TableHead>
-                  <TableHead>Team</TableHead>
-                  <TableHead>Market</TableHead>
-                  <TableHead className="text-right">Conf</TableHead>
-                  <TableHead className="text-right">Proj</TableHead>
-                  <TableHead className="text-right">Edge Grade</TableHead>
-                  <TableHead className="text-right">Edge</TableHead>
+                   <TableHead>Team</TableHead>
+                   <TableHead>Market</TableHead>
+                   <TableHead className="text-right">Proj</TableHead>
+                   <TableHead className="text-right">Edge Grade</TableHead>
+                   <TableHead className="text-right">Edge</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -240,12 +236,11 @@ export default function Parlays() {
                         />
                       </TableCell>
                       <TableCell className="font-medium">{p.player_name}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{p.team_name}</TableCell>
-                      <TableCell>{getMarketLabel(p.market, "short")}</TableCell>
-                      <TableCell className="text-right tabular-nums">{Number(p.confidence).toFixed(0)}</TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatProjectionForMarket(p.projection, p.market)}
-                      </TableCell>
+                       <TableCell className="text-xs text-muted-foreground">{p.team_name}</TableCell>
+                       <TableCell>{getMarketLabel(p.market, "short")}</TableCell>
+                       <TableCell className="text-right tabular-nums">
+                         {formatProjectionForMarket(p.projection, p.market)}
+                       </TableCell>
                       <TableCell className="text-right">
                         <span className={"inline-block rounded px-1.5 py-0.5 text-xs font-bold " + gradeColorClass(letterGrade)}>
                           {letterGrade}

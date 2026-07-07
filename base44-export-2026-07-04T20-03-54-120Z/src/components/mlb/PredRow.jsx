@@ -111,11 +111,6 @@ export default function PredRow({ p, expanded, onToggle }) {
         </TableCell>
         <TableCell>{getMarketLabel(p.market, "short")}</TableCell>
         <TableCell className="text-right tabular-nums">{fmt(p.projection, 3)}</TableCell>
-        <TableCell className="text-right">
-          <span className={"inline-block rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums " + confidenceColor(p.confidence)}>
-            {fmt(p.confidence, 0)}
-          </span>
-        </TableCell>
         <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{p.trigger_text}</TableCell>
         <TableCell className="text-right">
           <div className="flex items-center justify-end gap-1">
@@ -133,7 +128,7 @@ export default function PredRow({ p, expanded, onToggle }) {
       </TableRow>
       {expanded && (
         <TableRow className="bg-muted/30">
-          <TableCell colSpan={6}>
+          <TableCell colSpan={5}>
             <div className="space-y-4 py-2 text-xs">
               {/* Core Metrics Grid */}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
