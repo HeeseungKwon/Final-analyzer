@@ -41,7 +41,7 @@ const MAX_RANKED_POOL_SIZE = 18;
 const MIN_PICK_EDGE = -0.04;
 const MIN_STRUCTURED_POOL_SIZE = 4;
 const MIN_HOME_RUN_POOL_SIZE = 6;
-const MAX_HOME_RUN_POOL_SIZE = Math.ceil(MAX_RANKED_POOL_SIZE / 2);
+const HOME_RUN_POOL_SIZE = Math.max(MIN_HOME_RUN_POOL_SIZE, Math.ceil(MAX_RANKED_POOL_SIZE / 2));
 
 const CORRELATION_COMPONENTS = {
   base: 0.03,
@@ -310,7 +310,7 @@ function sortStructuredPicksByRank(a, b) {
   );
 }
 
-function candidateSharedPlayerCount(candidate, selectedPlayers) {
+function getCandidatePlayerOverlapCount(candidate, selectedPlayers) {
   if (!selectedPlayers.size) return 0;
   return candidate.legs.reduce((count, leg) => count + (selectedPlayers.has(leg.playerId) ? 1 : 0), 0);
 }
@@ -320,8 +320,8 @@ function pickBestStructuredCandidate(candidates, selectedParlays) {
   const selectedPlayers = new Set(
     selectedParlays.flatMap((parlay) => (parlay.legs ?? []).map((leg) => leg.playerId))
   );
-  return [...candidates].sort((a, b) => {
-    const overlapDiff = candidateSharedPlayerCount(a, selectedPlayers) - candidateSharedPlayerCount(b, selectedPlayers);
+  return candidates.sort((a, b) => {
+    const overlapDiff = getCandidatePlayerOverlapCount(a, selectedPlayers) - getCandidatePlayerOverlapCount(b, selectedPlayers);
     if (overlapDiff !== 0) return overlapDiff;
     return b.rankingScore - a.rankingScore;
   })[0] ?? null;
@@ -516,7 +516,7 @@ export function buildParlays(predictions, selectedGamePks) {
       .slice(0, MAX_RANKED_POOL_SIZE);
     const homeRunPool = scoredPool
       .filter((p) => p.market === "home_run")
-      .slice(0, Math.max(MIN_HOME_RUN_POOL_SIZE, MAX_HOME_RUN_POOL_SIZE));
+      .slice(0, HOME_RUN_POOL_SIZE);
     if (corePool.length < MIN_STRUCTURED_POOL_SIZE) return [];
 
     const structuredParlays = [];
