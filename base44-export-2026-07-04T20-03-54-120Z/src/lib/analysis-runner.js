@@ -19,6 +19,8 @@ import { edgeBasedScoring, scoreHitter, scorePitcher, parkFactorFor, getHitterSi
 import { fetchRealtimeOdds } from "@/lib/sportsbook-api";
 import { enrichPredictionWithProjections } from "@/lib/projection-scorer";
 
+const DEFAULT_PITCHER_ERA = 4.0;
+
 function parseFeatures(raw) {
   if (!raw) return {};
   if (typeof raw === "object") return raw;
@@ -238,6 +240,16 @@ export async function runAnalysis(dateArg, onProgress) {
         getOppPitcherHand(oppSP),
         getTeamHitting(teamId),
       ]);
+      const oppPitcherStats = oppSPStats
+        ? {
+            bf: oppSPStats.bf ?? 0,
+            hits_allowed: oppSPStats.hits_allowed ?? 0,
+            hr_allowed: oppSPStats.hr_allowed ?? 0,
+            bb: oppSPStats.bb ?? 0,
+            era: oppSPStats.era ?? DEFAULT_PITCHER_ERA,
+            k_percent: oppSPStats.k_percent ?? 0,
+          }
+        : null;
       const oppSPk = oppSPStats?.k_percent ?? null;
       const oppSPhrPerBF = oppSPStats && (oppSPStats.bf ?? 0) > 0
         ? (oppSPStats.hr_allowed ?? 0) / oppSPStats.bf
@@ -259,6 +271,7 @@ export async function runAnalysis(dateArg, onProgress) {
             season: seasonStats,
             recent,
             split: splitStats,
+            oppPitcherStats,
             oppPitcherK: oppSPk,
             oppPitcherHrPerBF: oppSPhrPerBF,
             oppPitcherGbFbRatio: oppSPStats?.gb_fb_ratio ?? null,
@@ -328,12 +341,7 @@ export async function runAnalysis(dateArg, onProgress) {
             // Enrich with market-specific projection scores
             if (simulationData) {
               try {
-                const oppPitcherStats = {
-                  bf: oppSP?.bf ?? 0,
-                  k: oppSPk ?? 0,
-                  era: oppSP?.era ?? 4.0,
-                };
-                const oppTeamStats = {
+                const offensiveContext = {
                   impliedRuns: baseCtx.teamImpliedTotal ?? 4.5,
                   obpAhead: baseCtx.onbaseRateAhead ?? 0.320,
                   obpBehind: baseCtx.onbaseRateBehind ?? 0.310,
@@ -353,7 +361,7 @@ export async function runAnalysis(dateArg, onProgress) {
                   baseCtx,
                   oppPitcherStats,
                   s.market,
-                  oppTeamStats,
+                  offensiveContext,
                   slateNorms
                 );
                 predRow = enriched;
