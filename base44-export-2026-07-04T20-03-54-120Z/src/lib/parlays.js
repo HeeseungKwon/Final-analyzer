@@ -802,17 +802,21 @@ export function buildHRParlays(predictions, selectedGamePks) {
           ? "model between Park & Vegas (hidden edge)"
           : `HR pick (confidence ${Number(p.confidence ?? 0).toFixed(0)})`;
 
-    const twoLeg = pickDiverse(ranked, 2, { maxPerGame: adaptiveMax2, maxPerPlayer: 1, bannedPlayerIds: used }).map((p) =>
+    // Generate 2x 2-leg HR parlays from selected teams
+    const twoLeg1 = pickDiverse(ranked, 2, { maxPerGame: adaptiveMax2, maxPerPlayer: 1, bannedPlayerIds: used }).map((p) =>
       toLeg(p, verdictReason(p))
     );
-    const par2 = assembleParlay("HR 2-Leg", "2-leg HR parlay (strong + middling picks allowed).", twoLeg, 2);
-    if (par2) { parlays.push(par2); for (const l of par2.legs) used.add(l.playerId); }
+    const par2_1 = assembleParlay("HR 2-Leg #1", "2-leg HR parlay (strong + middling picks allowed).", twoLeg1, 2);
+    if (par2_1) { 
+      parlays.push(par2_1); 
+      for (const l of par2_1.legs) used.add(l.playerId); 
+    }
 
-    let threeLegPool = pickDiverse(ranked, 3, { maxPerGame: adaptiveMax3, maxPerPlayer: 1, bannedPlayerIds: used });
-    if (threeLegPool.length < 3) threeLegPool = pickDiverse(ranked, 3, { maxPerGame: adaptiveMax3, maxPerPlayer: 1 });
-    const threeLeg = threeLegPool.map((p) => toLeg(p, verdictReason(p)));
-    const par3 = assembleParlay("HR 3-Leg", "3-leg HR parlay (strong + middling picks allowed).", threeLeg, 2);
-    if (par3) parlays.push(par3);
+    const twoLeg2 = pickDiverse(ranked, 2, { maxPerGame: adaptiveMax2, maxPerPlayer: 1, bannedPlayerIds: used }).map((p) =>
+      toLeg(p, verdictReason(p))
+    );
+    const par2_2 = assembleParlay("HR 2-Leg #2", "2-leg HR parlay (strong + middling picks allowed).", twoLeg2, 2);
+    if (par2_2) parlays.push(par2_2);
 
     return parlays;
   }

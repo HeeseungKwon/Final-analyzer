@@ -305,11 +305,11 @@ export function scoreHitterV2(name, ctx) {
   const probs = computePropProbabilities(batter, pitcher, gameCtx);
   
   const markets = [
-    { key: "hit_2", label: "2+ Hits", prob: probs["2+ Hits"], anchor: 0.27, slope: 170 },
-    { key: "total_bases", label: "TB O1.5", prob: probs["2+ Total Bases"], anchor: 0.5, slope: 140 },
-    { key: "hrr_2", label: "HRR O1.5", prob: probs["2+ HRR"], anchor: 0.5, slope: 145 },
-    { key: "hrr_3", label: "HRR O2.5", prob: probs["3+ HRR"], anchor: 0.32, slope: 165 },
-    { key: "home_run", label: "Home Run", prob: probs["1+ HR"], anchor: 0.1, slope: 300 },
+    { key: "hit_2", label: "2+ Hits", prob: probs["2+ Hits"], anchor: 0.5, slope: 120 },
+    { key: "total_bases", label: "TB O1.5", prob: probs["2+ Total Bases"], anchor: 0.5, slope: 120 },
+    { key: "hrr_2", label: "HRR O1.5", prob: probs["2+ HRR"], anchor: 0.5, slope: 120 },
+    { key: "hrr_3", label: "HRR O2.5", prob: probs["3+ HRR"], anchor: 0.5, slope: 120 },
+    { key: "home_run", label: "Home Run", prob: probs["1+ HR"], anchor: 0.5, slope: 120 },
   ];
   
   const trigger = `Monte Carlo simulation: HR ${(batter.hr * 100).toFixed(1)}%, Contact ${(batter["1b"] * 100).toFixed(1)}%`;

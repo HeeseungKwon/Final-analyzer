@@ -11,7 +11,6 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/components/ui/use-toast";
 import { gradeAllUngraded } from "@/lib/grading";
-import { runOneTimeABComparison } from "@/lib/ab-comparison";
 import { getMarketLabel, isProbabilityMarket } from "@/lib/constants/markets";
 import BucketBar from "@/components/mlb/BucketBar";
 import PicksReviewTable from "@/components/mlb/PicksReviewTable";
@@ -155,16 +154,24 @@ function buildAccuracyFromPicks(gradedPicks) {
   return { marketSummary, buckets };
 }
 
+function getMarketCategory(market) {
+  if (market === "home_run") return "HR";
+  if (market === "hrr_2" || market === "hrr_3") return "HRR";
+  if (market === "hit_2") return "Hit";
+  if (market === "total_bases") return "TB";
+  if (market === "strikeouts") return "K";
+  return null;
+}
+
 export default function Review() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [progress, setProgress] = useState("");
   const [date, setDate] = useState(todayStr());
-  const [abProgress, setAbProgress] = useState("");
-  const [abResult, setAbResult] = useState(null);
   const [savedParlays, setSavedParlays] = useState([]);
   const [parlaySyncState, setParlaySyncState] = useState({});
   const [expandedParlayIds, setExpandedParlayIds] = useState(() => new Set());
+  const [selectedMarketCategories, setSelectedMarketCategories] = useState(new Set(["HR", "HRR", "Hit", "TB", "K"]));
 
   function persistSavedParlays(nextParlays) {
     try {
@@ -241,19 +248,6 @@ export default function Review() {
     },
   });
 
-  const abCompare = useMutation({
-    mutationFn: () => runOneTimeABComparison(date, setAbProgress),
-    onSuccess: (r) => {
-      setAbResult(r);
-      setAbProgress("");
-      toast({ title: "A/B comparison complete", description: `Compared legacy vs modern picks for ${r.date}` });
-    },
-    onError: (e) => {
-      setAbProgress("");
-      toast({ title: "A/B comparison error", description: String(e?.message ?? e), variant: "destructive" });
-    },
-  });
-
   const { data, isLoading } = useQuery({
     queryKey: ["review", date],
     queryFn: async () => {
@@ -310,9 +304,6 @@ export default function Review() {
         </div>
         <div className="flex items-center gap-2">
           <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-40" />
-          <Button variant="outline" onClick={() => abCompare.mutate()} disabled={abCompare.isPending}>
-            {abCompare.isPending ? "Running A/B…" : "Run one-time A/B"}
-          </Button>
           <Button onClick={() => grade.mutate()} disabled={grade.isPending}>
             {grade.isPending ? "Grading…" : "Grade results"}
           </Button>
@@ -325,98 +316,32 @@ export default function Review() {
         </div>
       )}
 
-      {abCompare.isPending && abProgress && (
-        <div className="mb-4 rounded border bg-muted/40 px-3 py-2 text-xs text-muted-foreground animate-pulse">
-          {abProgress}
+      {isLoading && <div className="py-10 text-center text-muted-foreground">Loading…</div>}
+      {!isLoading && (
+        <div className="mb-6 flex flex-wrap items-center gap-2">
+          <div className="text-xs uppercase tracking-widest text-muted-foreground">Filter by market:</div>
+          {["HR", "HRR", "Hit", "TB", "K"].map((cat) => (
+            <button
+              key={cat}
+              onClick={() => {
+                setSelectedMarketCategories((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(cat)) next.delete(cat);
+                  else next.add(cat);
+                  return next;
+                });
+              }}
+              className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
+                selectedMarketCategories.has(cat)
+                  ? "bg-primary text-primary-foreground"
+                  : "border border-input bg-background hover:bg-accent"
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
         </div>
       )}
-
-      {!isLoading && abResult && (
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>One-time A/B comparison ({abResult.date})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="mb-3 text-xs text-muted-foreground">{abResult.note}</div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Model</TableHead>
-                  <TableHead className="text-right">Raw recommended</TableHead>
-                  <TableHead className="text-right">Portfolio recommended</TableHead>
-                  <TableHead className="text-right">Graded</TableHead>
-                  <TableHead className="text-right">Hits</TableHead>
-                  <TableHead className="text-right">Hit rate</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow>
-                  <TableCell className="font-medium">Legacy (old)</TableCell>
-                  <TableCell className="text-right tabular-nums">{abResult.legacyRaw?.recommended ?? abResult.legacy.recommended}</TableCell>
-                  <TableCell className="text-right tabular-nums">{abResult.legacy.recommended}</TableCell>
-                  <TableCell className="text-right tabular-nums">{abResult.legacy.graded}</TableCell>
-                  <TableCell className="text-right tabular-nums">{abResult.legacy.hits}</TableCell>
-                  <TableCell className="text-right tabular-nums font-semibold">{abResult.legacy.hitRate != null ? `${(abResult.legacy.hitRate * 100).toFixed(1)}%` : "—"}</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="font-medium">Modern (new)</TableCell>
-                  <TableCell className="text-right tabular-nums">{abResult.modernRaw?.recommended ?? abResult.modern.recommended}</TableCell>
-                  <TableCell className="text-right tabular-nums">{abResult.modern.recommended}</TableCell>
-                  <TableCell className="text-right tabular-nums">{abResult.modern.graded}</TableCell>
-                  <TableCell className="text-right tabular-nums">{abResult.modern.hits}</TableCell>
-                  <TableCell className="text-right tabular-nums font-semibold">{abResult.modern.hitRate != null ? `${(abResult.modern.hitRate * 100).toFixed(1)}%` : "—"}</TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-
-            <div className="mt-4 text-xs text-muted-foreground">Overlapping recommended picks: {abResult.overlapCount}</div>
-
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm">Legacy-only picks</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {abResult.legacyOnly.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">None</div>
-                  ) : (
-                    <div className="space-y-1">
-                      {abResult.legacyOnly.slice(0, 20).map((p) => (
-                        <div key={`legacy-${p.game_pk}-${p.player_id}-${p.market}`} className="flex items-center justify-between gap-2 text-xs">
-                          <span className="truncate text-muted-foreground">{p.player_name} · {getMarketLabel(p.market, "short")}</span>
-                          <Badge variant={p.hit == null ? "outline" : p.hit ? "default" : "destructive"}>{p.hit == null ? "pending" : p.hit ? "hit" : "miss"}</Badge>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm">Modern-only picks</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {abResult.modernOnly.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">None</div>
-                  ) : (
-                    <div className="space-y-1">
-                      {abResult.modernOnly.slice(0, 20).map((p) => (
-                        <div key={`modern-${p.game_pk}-${p.player_id}-${p.market}`} className="flex items-center justify-between gap-2 text-xs">
-                          <span className="truncate text-muted-foreground">{p.player_name} · {getMarketLabel(p.market, "short")}</span>
-                          <Badge variant={p.hit == null ? "outline" : p.hit ? "default" : "destructive"}>{p.hit == null ? "pending" : p.hit ? "hit" : "miss"}</Badge>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {isLoading && <div className="py-10 text-center text-muted-foreground">Loading…</div>}
       {!isLoading && (
         <div className="grid gap-6 md:grid-cols-2">
           <Card>
@@ -435,7 +360,9 @@ export default function Review() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data.marketSummary.map((m) => (
+                    {data.marketSummary
+                      .filter((m) => selectedMarketCategories.has(getMarketCategory(m.market)))
+                      .map((m) => (
                       <TableRow key={m.market}>
                         <TableCell>{getMarketLabel(m.market, "full")}</TableCell>
                         <TableCell className="text-right tabular-nums">{m.n}</TableCell>
@@ -469,7 +396,9 @@ export default function Review() {
                         {getMarketLabel(market, "full")}
                       </div>
                       <div className="space-y-2">
-                        {rows.map((b) => (
+                        {rows
+                          .filter((b) => selectedMarketCategories.has(getMarketCategory(b.market)))
+                          .map((b) => (
                           <div key={`${b.market}-${b.confidence_bucket}`} className="flex items-center gap-3">
                             <div className="w-16 shrink-0 text-xs tabular-nums text-muted-foreground">
                               {b.confidence_bucket}-{b.confidence_bucket + 10}

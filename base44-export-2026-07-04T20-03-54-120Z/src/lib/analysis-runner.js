@@ -454,9 +454,7 @@ function applyHybridConsensus(scores, legacyMap, marketReliability) {
 
     const threshold = CONSENSUS_THRESHOLD[s.market] ?? 75;
     const consensusGate =
-      s.market === "home_run"
-        ? (s.recScore >= 48 && legacyRec >= 42 && agree >= 0.2)
-        : (s.recScore >= 44 && legacyRec >= 38 && agree >= 0.2);
+      (s.recScore >= 44 && legacyRec >= 38 && agree >= 0.2);
 
     const recommended = consensusGate && hybridRec >= threshold && s.dataQuality !== "missing";
 
