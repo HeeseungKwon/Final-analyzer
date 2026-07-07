@@ -16,6 +16,9 @@ import { scoreHitter, scorePitcher, parkFactorFor } from "@/lib/scoring";
 import { scoreHitterLegacy, scorePitcherLegacy } from "@/lib/scoring-legacy";
 import { getRecommendationMarketPriority, isProbabilityMarket } from "@/lib/constants/markets";
 
+// Support for gradual rollout: wrap new engine calls with fallback
+const USE_NEW_ENGINE = true;
+
 const MARKET_LIMITS = {
   hit_2: 10,
   hrr_2: 12,
@@ -598,10 +601,14 @@ export async function runAnalysis(dateArg, onProgress) {
             recent,
             oppPitcherK: oppSPk,
             oppPitcherHrPerBF: oppSPhrPerBF,
+            oppPitcherGbFbRatio: oppSPStats?.gb_fb_ratio ?? null,
             oppBullpenK: null,
             expectedPA: expectedPAForBattingOrder(lp.battingOrder),
             battingOrder: lp.battingOrder,
             parkFactor: parkFactorFor(g.home_team_id),
+            teamImpliedTotal: null,
+            onbaseRateAhead: null,
+            onbaseRateBehind: null,
             vegasHrProb: null,
           };
 
