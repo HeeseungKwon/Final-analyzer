@@ -1,5 +1,7 @@
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb";
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const LINE_MATCH_TOLERANCE = 0.11;
+const MIN_CANDIDATE_SCORE = 7;
 
 const DEFAULT_IMPLIED_PROBABILITIES = {
   hit_2: 0.33,
@@ -209,7 +211,7 @@ function candidateScore(candidate, market, playerName) {
 
   if (expectedLine == null || candidate.marketLine == null) {
     score += 1;
-  } else if (Math.abs(candidate.marketLine - expectedLine) <= 0.11) {
+  } else if (Math.abs(candidate.marketLine - expectedLine) <= LINE_MATCH_TOLERANCE) {
     score += 2;
   }
 
@@ -235,7 +237,7 @@ export async function fetchRealtimeOdds(gamePk, market, playerName) {
         ...candidate,
         score: candidateScore(candidate, market, playerName),
       }))
-      .filter((candidate) => candidate.score >= 7)
+      .filter((candidate) => candidate.score >= MIN_CANDIDATE_SCORE)
       .sort((a, b) => b.score - a.score)[0];
 
     if (!best) return fallback;

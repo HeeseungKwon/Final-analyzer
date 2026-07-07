@@ -26,6 +26,9 @@ const LEAGUE_AVG = {
 
 const LEAGUE_AVG_RUNS_PER_GAME = 4.5;
 const LEAGUE_AVG_BARREL_PCT = 0.075;
+const INFERRED_STDDEV_Z_SPREAD = 2.56;
+const MIN_INFERRED_STDDEV = 0.85;
+const PROJECTION_STDDEV_RATIO = 0.18;
 
 const LINEUP_PA_TABLE = {
   1: 4.65, 2: 4.55, 3: 4.45, 4: 4.35, 5: 4.25,
@@ -480,8 +483,8 @@ function inferModelProbability({ market, projection, floor, ceiling, marketLine 
     const floorValue = Number(floor);
     const ceilingValue = Number(ceiling);
     const inferredStdDev = Number.isFinite(ceilingValue - floorValue)
-      ? Math.max(0.85, Math.abs(ceilingValue - floorValue) / 2.56)
-      : Math.max(0.85, projectedValue * 0.18);
+      ? Math.max(MIN_INFERRED_STDDEV, Math.abs(ceilingValue - floorValue) / INFERRED_STDDEV_Z_SPREAD)
+      : Math.max(MIN_INFERRED_STDDEV, projectedValue * PROJECTION_STDDEV_RATIO);
     const threshold = line ?? 5.5;
     return clamp(1 - normalCdf(threshold, projectedValue, inferredStdDev), 0.01, 0.99);
   }
@@ -568,4 +571,3 @@ export function getHitterSimulationData(ctx) {
 }
 
 export { scoreHitterV2 as scoreHitter, scorePitcherV2 as scorePitcher };
-export { calculateEdge, calculateKelly, calculateROI, shouldRecommend };

@@ -32,12 +32,18 @@ function parseFeatures(raw) {
 function rebalanceRecommendations(rows) {
   rows.forEach((row) => {
     const features = parseFeatures(row.features);
+    // Keep writing the legacy `rec_score` field for downstream pages/entities,
+    // but its meaning is now edge in percentage points (for example +6.5).
     row.rec_score = Math.round((Number(features.edge ?? 0) * 100) * 100) / 100;
     row.recommended = Boolean(features.recommended ?? row.recommended);
   });
 }
 
-function pruneRedundantRecommendations() {}
+function pruneRedundantRecommendations() {
+  // Edge-based mode intentionally keeps every qualified pick visible rather than
+  // pruning by portfolio heuristics. The function remains as a no-op so the
+  // existing runAnalysis flow stays compatible with persisted entities/pages.
+}
 
 /**
  * Top-up and overflow stage for daily recommended picks.
@@ -60,6 +66,8 @@ function pruneRedundantRecommendations() {}
  * cause random ordering across runs.
  */
 function topUpRecommendations(rows) {
+  // Legacy top-up logic forced a minimum pick count. The redesigned engine keeps
+  // recommendations strict: only +5% edge plays stay recommended.
   return rows;
 }
 

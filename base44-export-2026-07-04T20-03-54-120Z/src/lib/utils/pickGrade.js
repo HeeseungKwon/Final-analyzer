@@ -15,6 +15,9 @@ function extractEdge(pick) {
   const edge = Number(features?.edge ?? features?.modelEdge);
   if (Number.isFinite(edge)) return edge;
 
+  // Compatibility fallback: the persisted `rec_score` field now stores edge in
+  // percentage points (for example 6.5 for +6.5%), so convert it back to a
+  // decimal edge when older UI paths only pass the top-level prediction fields.
   const recScore = Number(pick?.rec_score ?? pick?.recScore);
   return Number.isFinite(recScore) ? recScore / 100 : 0;
 }
