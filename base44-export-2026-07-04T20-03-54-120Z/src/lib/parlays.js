@@ -298,7 +298,7 @@ function dedupeAndRankParlays(candidates, limit = 8) {
   return out;
 }
 
-function compareStructuredPickRank(a, b) {
+function sortStructuredPicksByRank(a, b) {
   return (
     getRecommendationMarketPriority(a.market) - getRecommendationMarketPriority(b.market) ||
     b._edge - a._edge ||
@@ -308,23 +308,28 @@ function compareStructuredPickRank(a, b) {
   );
 }
 
-function candidateSharedPlayerCount(candidate, selectedParlays) {
-  if (!selectedParlays.length) return 0;
-  const selectedPlayers = new Set(
-    selectedParlays.flatMap((parlay) => (parlay.legs ?? []).map((leg) => leg.playerId))
-  );
+function candidateSharedPlayerCount(candidate, selectedPlayers) {
+  if (!selectedPlayers.size) return 0;
   return candidate.legs.reduce((count, leg) => count + (selectedPlayers.has(leg.playerId) ? 1 : 0), 0);
 }
 
 function pickBestStructuredCandidate(candidates, selectedParlays) {
   if (candidates.length === 0) return null;
+  const selectedPlayers = new Set(
+    selectedParlays.flatMap((parlay) => (parlay.legs ?? []).map((leg) => leg.playerId))
+  );
   return [...candidates].sort((a, b) => {
-    const overlapDiff = candidateSharedPlayerCount(a, selectedParlays) - candidateSharedPlayerCount(b, selectedParlays);
+    const overlapDiff = candidateSharedPlayerCount(a, selectedPlayers) - candidateSharedPlayerCount(b, selectedPlayers);
     if (overlapDiff !== 0) return overlapDiff;
     return b.rankingScore - a.rankingScore;
   })[0] ?? null;
 }
 
+/**
+ * Enumerates structured selected-game parlays that must satisfy an exact
+ * home-run-leg count while still optimizing for EV, confidence, and low
+ * correlation across unique players.
+ */
 function buildStructuredParlayCandidates({
   pool,
   size,
@@ -339,10 +344,12 @@ function buildStructuredParlayCandidates({
   const maxPerGame = adaptiveMaxPerGame(selectedGameCount, size);
 
   const search = (start, chosen, byGame, byPlayer, homeRunLegs) => {
+    // Stop the recursive search once we have a sufficiently deep candidate set.
     if (candidates.length >= MAX_CANDIDATE_PARLAYS) return;
 
     const remaining = size - chosen.length;
     const remainingHomeRunsNeeded = exactHomeRunLegs - homeRunLegs;
+    // Prune branches that can no longer satisfy the exact HR-leg requirement.
     if (remainingHomeRunsNeeded > remaining) return;
     if (homeRunLegs > exactHomeRunLegs) return;
 
@@ -500,7 +507,7 @@ export function buildParlays(predictions, selectedGamePks) {
           _tier: tierForPrediction(p),
         };
       })
-      .sort(compareStructuredPickRank);
+      .sort(sortStructuredPicksByRank);
 
     const corePool = scoredPool
       .filter((p) => isCoreHitterMarket(p.market))
@@ -514,7 +521,7 @@ export function buildParlays(predictions, selectedGamePks) {
 
     const mixedCandidates = buildStructuredParlayCandidates({
       pool: [...homeRunPool, ...corePool]
-        .sort(compareStructuredPickRank)
+        .sort(sortStructuredPicksByRank)
         .slice(0, MAX_RANKED_POOL_SIZE),
       size: 4,
       name: "Best 4-Leg Card (1 HR)",

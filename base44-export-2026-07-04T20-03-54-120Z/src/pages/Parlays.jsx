@@ -27,7 +27,7 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function compareRecommendedPicks(a, b) {
+function sortRecommendedPicksByPriority(a, b) {
   return (
     getRecommendationMarketPriority(a.market) - getRecommendationMarketPriority(b.market) ||
     (b.rec_score ?? 0) - (a.rec_score ?? 0) ||
@@ -166,7 +166,7 @@ export default function Parlays() {
     () =>
       eligiblePredictions
         .filter((p) => selectedGamePks.has(p.game_pk) && p.recommended)
-        .sort(compareRecommendedPicks),
+        .sort(sortRecommendedPicksByPriority),
     [eligiblePredictions, selectedGamePks]
   );
 
@@ -191,7 +191,7 @@ export default function Parlays() {
     [eligiblePredictions, selectedGamePks]
   );
 
-  function renderPicksTable(picks) {
+  function renderRecommendedPicksTable(picks) {
     return (
       <Card>
         <CardContent className="p-0">
@@ -459,7 +459,7 @@ export default function Parlays() {
                         <div className="text-xs uppercase tracking-widest text-muted-foreground">Core hitter recommendations</div>
                         <h4 className="text-base font-bold tracking-tight">Best HRR, hits, and total bases props</h4>
                       </div>
-                      {renderPicksTable(corePicksForGames)}
+                      {renderRecommendedPicksTable(corePicksForGames)}
                     </div>
                   ) : (
                     <Card>
@@ -475,7 +475,7 @@ export default function Parlays() {
                       <h4 className="text-base font-bold tracking-tight">Dedicated HR opportunities</h4>
                     </div>
                     {homeRunPicksForGames.length > 0 ? (
-                      renderPicksTable(homeRunPicksForGames)
+                      renderRecommendedPicksTable(homeRunPicksForGames)
                     ) : (
                       <Card>
                         <CardContent className="py-6 text-center text-sm text-muted-foreground">
@@ -491,7 +491,7 @@ export default function Parlays() {
                         <div className="text-xs uppercase tracking-widest text-muted-foreground">Other recommended props</div>
                         <h4 className="text-base font-bold tracking-tight">Non-core markets still flagged by the model</h4>
                       </div>
-                      {renderPicksTable(otherPicksForGames)}
+                      {renderRecommendedPicksTable(otherPicksForGames)}
                     </div>
                   )}
                 </div>

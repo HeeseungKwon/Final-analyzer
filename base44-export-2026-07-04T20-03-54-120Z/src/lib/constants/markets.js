@@ -137,10 +137,18 @@ export function normalizeMarketKey(marketKey) {
   return LEGACY_MARKET_ALIASES[marketKey] ?? marketKey;
 }
 
+/**
+ * Returns true when the market belongs to the core hitter recommendation set:
+ * 2+ HRR, 3+ HRR, 2+ Hits, or TB O1.5.
+ */
 export function isCoreHitterMarket(marketKey) {
   return CORE_HITTER_MARKET_SET.has(normalizeMarketKey(marketKey));
 }
 
+/**
+ * Lower numbers represent higher recommendation priority. Unknown markets sort
+ * to the end so new or unsupported market keys cannot displace the core order.
+ */
 export function getRecommendationMarketPriority(marketKey) {
   const key = normalizeMarketKey(marketKey);
   return RECOMMENDATION_MARKET_PRIORITY[key] ?? Number.MAX_SAFE_INTEGER;
