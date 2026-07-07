@@ -226,6 +226,68 @@ function rebalanceRecommendations(rows) {
   });
 }
 
+/**
+ * Top-up and overflow stage for daily recommended picks.
+ *
+ * Policy (applied after rebalanceRecommendations):
+ *
+ * MIN_DAILY_PICKS = 50
+ *   After primary rebalancing, if fewer than 50 picks are recommended, the best
+ *   near-threshold candidates (sorted by portfolioScore desc) are promoted until
+ *   50 is reached or candidates run out.  The relaxed confidence gate is 42 (vs
+ *   the primary gate of 55-58) so that near-miss picks are considered.
+ *
+ * HIGH_CONF_THRESHOLD = 78  (rec_score)
+ *   After reaching 50, any pick whose rec_score ≥ 78 is included regardless of
+ *   count.  This allows the total to exceed 50 on high-confidence slates without
+ *   admitting low-quality picks.
+ *
+ * Stability: near-threshold candidates are sorted deterministically by
+ * portfolioScore (desc) then by player_id (asc) so that equal-score ties do not
+ * cause random ordering across runs.
+ */
+function topUpRecommendations(rows) {
+  const MIN_DAILY_PICKS = 50;
+  const TOPUP_MIN_CONFIDENCE = 42; // relaxed gate for top-up candidates
+  const HIGH_CONF_THRESHOLD = 78;  // rec_score threshold for automatic overflow inclusion
+
+  // Only operate on non-final (non-"missing" quality) rows that are not yet recommended.
+  const notYetRec = rows
+    .map((row, idx) => ({
+      row,
+      idx,
+      portfolioScore: rankForPortfolio(row),
+    }))
+    .filter(({ row }) => !row.recommended)
+    .filter(({ row }) => row.data_quality !== "missing")
+    .filter(({ row }) => (row.confidence ?? 0) >= TOPUP_MIN_CONFIDENCE)
+    // Stable sort: primary desc portfolioScore, secondary asc player_id for determinism
+    .sort((a, b) =>
+      b.portfolioScore - a.portfolioScore ||
+      String(a.row.player_id).localeCompare(String(b.row.player_id))
+    );
+
+  const currentCount = rows.filter((r) => r.recommended).length;
+
+  let promoted = 0;
+  for (const c of notYetRec) {
+    const totalRec = currentCount + promoted;
+
+    // Always include high-confidence picks regardless of count ceiling
+    if ((c.row.rec_score ?? 0) >= HIGH_CONF_THRESHOLD) {
+      rows[c.idx].recommended = true;
+      promoted += 1;
+      continue;
+    }
+
+    // Top-up to minimum 50 picks
+    if (totalRec < MIN_DAILY_PICKS) {
+      rows[c.idx].recommended = true;
+      promoted += 1;
+    }
+  }
+}
+
 function expectedPAForBattingOrder(order) {
   if (!order || order <= 0) return 3.8;
   if (order <= 2) return 4.5;
@@ -546,6 +608,7 @@ export async function runAnalysis(dateArg, onProgress) {
   }
 
   rebalanceRecommendations(predictionRows);
+  topUpRecommendations(predictionRows);
 
   log(`Saving ${predictionRows.length} predictions...`);
   const BATCH = 50;

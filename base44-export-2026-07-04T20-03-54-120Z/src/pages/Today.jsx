@@ -169,7 +169,7 @@ export default function Today() {
                             </TableHead>
                             <TableHead className="text-right">Conf</TableHead>
                             <TableHead>Trigger</TableHead>
-                            <TableHead className="text-right">Rec</TableHead>
+                            <TableHead className="text-right">Grade / Rec</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
