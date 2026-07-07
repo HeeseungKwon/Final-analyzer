@@ -246,7 +246,6 @@ export async function runAnalysis(dateArg, onProgress) {
             bb: oppSPStats.bb ?? 0,
             era: oppSPStats.era ?? 4.0,
             k_percent: oppSPStats.k_percent ?? 0,
-            k: oppSPStats.k_percent ?? 0,
           }
         : null;
       const oppSPk = oppSPStats?.k_percent ?? null;
