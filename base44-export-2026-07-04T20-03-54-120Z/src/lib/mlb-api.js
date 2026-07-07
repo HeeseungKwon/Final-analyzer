@@ -101,6 +101,7 @@ async function fetchHitterStatSplit(personId, season, sportId, group, games, cur
       rbi: toNum(split.rbi),
       runs: toNum(split.runs),
       bb: toNum(split.baseOnBalls),
+      hbp: toNum(split.hitByPitch),
       so: toNum(split.strikeOuts),
       avg: toNum(split.avg),
       obp: toNum(split.obp),
@@ -242,5 +243,74 @@ export async function fetchGameLineup(gamePk) {
     return result;
   } catch {
     return { home: [], away: [] };
+  }
+}
+
+/**
+ * Fetch a batter's stats split vs left-handed or right-handed pitchers.
+ * pitcherHand: 'L' or 'R' (or 'S' for switch — falls back to null)
+ * Returns null if fewer than 20 PA in the split (insufficient sample).
+ */
+export async function fetchHitterSplitVsHand(personId, season, pitcherHand) {
+  if (!personId || !pitcherHand || pitcherHand === 'S') return null;
+  const sitCode = pitcherHand === 'L' ? 'vl' : 'vr';
+  for (const candidateSeason of [season, season - 1]) {
+    try {
+      const url = `${BASE}/people/${personId}/stats?stats=statSplits&season=${candidateSeason}&group=hitting&sitCodes=${sitCode}`;
+      const data = await fetchJson(url);
+      const splits = data.stats?.[0]?.splits ?? [];
+      const split = splits.find(s => s.split?.code === sitCode) ?? splits[0];
+      if (!split?.stat) continue;
+      const pa = toNum(split.stat.plateAppearances);
+      if (pa < 20) continue;
+      return {
+        pa,
+        hits:      toNum(split.stat.hits),
+        doubles:   toNum(split.stat.doubles),
+        triples:   toNum(split.stat.triples),
+        home_runs: toNum(split.stat.homeRuns),
+        bb:        toNum(split.stat.baseOnBalls),
+        hbp:       toNum(split.stat.hitByPitch),
+        so:        toNum(split.stat.strikeOuts),
+        obp:       toNum(split.stat.obp),
+        slg:       toNum(split.stat.slg),
+        quality:   candidateSeason === season ? "ok" : "partial",
+      };
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+/**
+ * Fetch the throwing hand of a pitcher (returns 'L', 'R', or null).
+ */
+export async function fetchPitcherHand(personId) {
+  if (!personId) return null;
+  try {
+    const data = await fetchJson(`${BASE}/people/${personId}`);
+    return data.people?.[0]?.pitchHand?.code ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch team-level hitting stats: OBP and runs per game.
+ * Used as proxy for run-scoring environment (teamImpliedTotal) and lineup OBP context.
+ */
+export async function fetchTeamHittingStats(teamId, season) {
+  try {
+    const data = await fetchJson(`${BASE}/teams/${teamId}/stats?stats=season&season=${season}&group=hitting`);
+    const split = data.stats?.[0]?.splits?.[0]?.stat;
+    if (!split) return null;
+    const games = Math.max(toNum(split.gamesPlayed, 1), 1);
+    return {
+      obp: toNum(split.obp, 0.320),
+      runsPerGame: toNum(split.runs) / games,
+    };
+  } catch {
+    return null;
   }
 }

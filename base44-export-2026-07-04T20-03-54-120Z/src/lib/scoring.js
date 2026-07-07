@@ -63,6 +63,68 @@ function toConfidence(prob, anchor = 0.5, slope = 120) {
 }
 
 /**
+ * Build per-PA outcome rates by credibility-weighted blending of season, recent form, and handedness split.
+ *
+ * Shrinkage constants:
+ *   K_RECENT = 50  → need 50 PA for 50% credibility on recent form (avoids hot-streak overreaction)
+ *   K_SPLIT  = 150 → splits are noisier; need 150 PA for 50% credibility
+ *
+ * 1B rate is correctly computed as (hits - 2B - 3B - HR) / PA.
+ */
+function buildBatterRates(season, recent, split) {
+  const K_RECENT = 50;
+  const K_SPLIT  = 150;
+
+  function ratesFromStats(stats) {
+    const pa = stats?.pa ?? 0;
+    if (pa === 0) return null;
+    const singles = Math.max(0,
+      (stats.hits ?? 0) - (stats.doubles ?? 0) - (stats.triples ?? 0) - (stats.home_runs ?? 0)
+    );
+    return {
+      "1b":  singles / pa,
+      "2b":  (stats.doubles    ?? 0) / pa,
+      "3b":  (stats.triples    ?? 0) / pa,
+      "hr":  (stats.home_runs  ?? 0) / pa,
+      "bb":  (stats.bb         ?? 0) / pa,
+      "hbp": (stats.hbp        ?? 0) / pa,
+      "k":   (stats.so         ?? 0) / pa,
+    };
+  }
+
+  const seasonRates = ratesFromStats(season);
+  const recentRates = ratesFromStats(recent);
+  const splitRates  = ratesFromStats(split);
+
+  // No season data at all → fall back to league average
+  if (!seasonRates) {
+    return { "1b": LEAGUE_AVG["1b"], "2b": LEAGUE_AVG["2b"], "3b": LEAGUE_AVG["3b"],
+             "hr": LEAGUE_AVG.hr, "bb": LEAGUE_AVG.bb, "hbp": 0.010, "k": LEAGUE_AVG.k };
+  }
+
+  const outcomes = ["1b", "2b", "3b", "hr", "bb", "hbp", "k"];
+  // Credibility weights (Bayesian shrinkage): n / (n + K)
+  const crRecent = recent?.pa ? recent.pa / (recent.pa + K_RECENT) : 0;
+  const crSplit  = split?.pa  ? split.pa  / (split.pa  + K_SPLIT)  : 0;
+
+  const result = {};
+  for (const o of outcomes) {
+    const sRate = seasonRates[o] ?? LEAGUE_AVG[o] ?? 0;
+    // Step 1: blend recent form with credibility shrinkage toward season baseline
+    const afterRecent = recentRates
+      ? (1 - crRecent) * sRate + crRecent * (recentRates[o] ?? sRate)
+      : sRate;
+    // Step 2: blend handedness split (capped at 40% influence to avoid small-sample noise)
+    const afterSplit = splitRates
+      ? (1 - 0.4 * crSplit) * afterRecent + 0.4 * crSplit * (splitRates[o] ?? afterRecent)
+      : afterRecent;
+    result[o] = afterSplit;
+  }
+
+  return result;
+}
+
+/**
  * Estimate PA outcome probabilities with Log5 + park/weather adjustments
  */
 function estimatePAOutcomeProbs(batter, pitcher, ctx) {
@@ -269,15 +331,8 @@ export function scoreHitterV2(name, ctx) {
   
   const expectedPA = estimateExpectedPA(ctx.battingOrder ?? 5, ctx.teamImpliedTotal);
   
-  const batter = {
-    "1b": (ctx.season?.hits ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
-    "2b": (ctx.season?.doubles ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
-    "3b": (ctx.season?.triples ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
-    "hr": (ctx.season?.home_runs ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
-    "bb": (ctx.season?.bb ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
-    "hbp": (ctx.season?.hbp ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
-    "k": (ctx.season?.so ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
-  };
+  // Blend season baseline + recent form (shrinkage) + handedness split (shrinkage)
+  const batter = buildBatterRates(ctx.season, ctx.recent, ctx.split ?? null);
   
   const pitcher = {
     "1b": (ctx.oppPitcherStats?.hits_allowed ?? 0) / Math.max(1, ctx.oppPitcherStats?.bf ?? 1) / 0.85,
@@ -399,15 +454,8 @@ export function parkFactorFor(homeTeamId) {
  * Used by projection-scorer.js to enrich predictions
  */
 export function getHitterSimulationData(ctx) {
-  const batter = {
-    "1b": (ctx.season?.hits ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
-    "2b": (ctx.season?.doubles ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
-    "3b": (ctx.season?.triples ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
-    "hr": (ctx.season?.home_runs ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
-    "bb": (ctx.season?.bb ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
-    "hbp": (ctx.season?.hbp ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
-    "k": (ctx.season?.so ?? 0) / Math.max(1, ctx.season?.pa ?? 1),
-  };
+  // Blend season baseline + recent form (shrinkage) + handedness split (shrinkage)
+  const batter = buildBatterRates(ctx.season, ctx.recent, ctx.split ?? null);
   
   const pitcher = {
     "1b": (ctx.oppPitcherStats?.hits_allowed ?? 0) / Math.max(1, ctx.oppPitcherStats?.bf ?? 1) / 0.85,
