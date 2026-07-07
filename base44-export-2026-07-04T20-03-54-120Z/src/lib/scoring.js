@@ -356,6 +356,37 @@ function computePropProbabilities(batter, pitcher, ctx, nSims = 100000) {
   };
 }
 
+function buildPitcherRates(ctx) {
+  const rawBf = Number(ctx?.oppPitcherStats?.bf);
+  const hasPitcherStats = Number.isFinite(rawBf) && rawBf > 0;
+  const bf = hasPitcherStats ? rawBf : null;
+
+  const statHitsAllowed = hasPitcherStats ? Number(ctx?.oppPitcherStats?.hits_allowed ?? 0) : null;
+  const statHrAllowed = hasPitcherStats ? Number(ctx?.oppPitcherStats?.hr_allowed ?? 0) : null;
+  const statBb = hasPitcherStats ? Number(ctx?.oppPitcherStats?.bb ?? 0) : null;
+  const hrPerBfFallback = Number(ctx?.oppPitcherHrPerBF);
+
+  const singleRate = hasPitcherStats
+    ? Math.max(0, statHitsAllowed / bf / 0.85)
+    : LEAGUE_AVG["1b"];
+  const hrRate = hasPitcherStats
+    ? Math.max(0, statHrAllowed / bf)
+    : (Number.isFinite(hrPerBfFallback) ? Math.max(0, hrPerBfFallback) : LEAGUE_AVG.hr);
+  const bbRate = hasPitcherStats
+    ? Math.max(0, statBb / bf)
+    : LEAGUE_AVG.bb;
+
+  return {
+    "1b": singleRate,
+    "2b": LEAGUE_AVG["2b"],
+    "3b": LEAGUE_AVG["3b"],
+    "hr": hrRate,
+    "bb": bbRate,
+    "hbp": LEAGUE_AVG.hbp,
+    "k": ctx?.oppPitcherK ?? LEAGUE_AVG.k,
+  };
+}
+
 /**
  * Wrapper for current scoreHitter API compatibility
  * Converts new engine output to existing format
@@ -373,16 +404,7 @@ export function scoreHitterV2(name, ctx) {
   
   // Blend season baseline + recent form (shrinkage) + handedness split (shrinkage)
   const batter = buildBatterRates(ctx.season, ctx.recent, ctx.split ?? null);
-  
-  const pitcher = {
-    "1b": (ctx.oppPitcherStats?.hits_allowed ?? 0) / Math.max(1, ctx.oppPitcherStats?.bf ?? 1) / 0.85,
-    "2b": 0.045,
-    "3b": 0.004,
-    "hr": (ctx.oppPitcherStats?.hr_allowed ?? 0) / Math.max(1, ctx.oppPitcherStats?.bf ?? 1),
-    "bb": (ctx.oppPitcherStats?.bb ?? 0) / Math.max(1, ctx.oppPitcherStats?.bf ?? 1),
-    "hbp": 0.010,
-    "k": ctx.oppPitcherK ?? LEAGUE_AVG.k,
-  };
+  const pitcher = buildPitcherRates(ctx);
   
   const gameCtx = {
     parkFactor: (ctx.parkFactor ?? 100) / 100,
@@ -558,16 +580,7 @@ export function parkFactorFor(homeTeamId) {
 export function getHitterSimulationData(ctx) {
   // Blend season baseline + recent form (shrinkage) + handedness split (shrinkage)
   const batter = buildBatterRates(ctx.season, ctx.recent, ctx.split ?? null);
-  
-  const pitcher = {
-    "1b": (ctx.oppPitcherStats?.hits_allowed ?? 0) / Math.max(1, ctx.oppPitcherStats?.bf ?? 1) / 0.85,
-    "2b": 0.045,
-    "3b": 0.004,
-    "hr": (ctx.oppPitcherStats?.hr_allowed ?? 0) / Math.max(1, ctx.oppPitcherStats?.bf ?? 1),
-    "bb": (ctx.oppPitcherStats?.bb ?? 0) / Math.max(1, ctx.oppPitcherStats?.bf ?? 1),
-    "hbp": 0.010,
-    "k": ctx.oppPitcherK ?? LEAGUE_AVG.k,
-  };
+  const pitcher = buildPitcherRates(ctx);
   
   const gameCtx = {
     parkFactor: (ctx.parkFactor ?? 100) / 100,
