@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { buildParlays, buildCustomParlay as buildCustomParlayFn } from "@/lib/parlays";
+import { buildParlays, buildHRParlays, buildCustomParlay as buildCustomParlayFn } from "@/lib/parlays";
 import { recalculateParlayStatus } from "@/lib/utils/parlaySync";
 import { getMarketLabel, getRecommendationMarketPriority, isCoreHitterMarket } from "@/lib/constants/markets";
 import { computePickGrade, gradeColorClass } from "@/lib/utils/pickGrade";
@@ -193,7 +193,11 @@ export default function Parlays() {
 
   // Analyzer-generated parlays for selected games
   const analyzerParlays = useMemo(
-    () => buildParlays(eligiblePredictions, selectedGamePks),
+    () => {
+      const regularParlays = buildParlays(eligiblePredictions, selectedGamePks);
+      const hrParlays = selectedGamePks.size >= 2 ? buildHRParlays(eligiblePredictions, selectedGamePks) : [];
+      return [...regularParlays, ...hrParlays];
+    },
     [eligiblePredictions, selectedGamePks]
   );
 
