@@ -60,6 +60,8 @@ function buildEdgeFeatures(baseFeatures, edgeMetrics, oddsInfo) {
     oddsSource: oddsInfo.source,
     sportsbookProvider: oddsInfo.provider,
     oddsFallback: oddsInfo.fallbackUsed,
+    oddsFallbackReason: oddsInfo.fallbackReason,
+    oddsEventId: oddsInfo.eventId,
     recommended: edgeMetrics.recommended,
   };
 }
@@ -235,7 +237,11 @@ export async function runAnalysis(dateArg, onProgress) {
           } catch {}
 
           const scoredPredictions = await Promise.all(modernScores.map(async (s) => {
-            const oddsInfo = await fetchRealtimeOdds(g.game_pk, s.market, lp.fullName);
+            const oddsInfo = await fetchRealtimeOdds(g.game_pk, s.market, lp.fullName, {
+              gameDate: g.game_date,
+              homeTeamName: g.home_team_name,
+              awayTeamName: g.away_team_name,
+            });
             const edgeMetrics = edgeBasedScoring({
               market: s.market,
               projection: s.projection,
@@ -347,7 +353,11 @@ export async function runAnalysis(dateArg, onProgress) {
         });
 
         for (const s of modernScores) {
-          const oddsInfo = await fetchRealtimeOdds(g.game_pk, s.market, pname);
+          const oddsInfo = await fetchRealtimeOdds(g.game_pk, s.market, pname, {
+            gameDate: g.game_date,
+            homeTeamName: g.home_team_name,
+            awayTeamName: g.away_team_name,
+          });
           const edgeMetrics = edgeBasedScoring({
             market: s.market,
             projection: s.projection,

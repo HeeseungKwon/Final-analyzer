@@ -110,6 +110,13 @@ function parseFeatures(raw) {
   }
 }
 
+// Returns true when a prediction used fallback (default) odds rather than
+// live sportsbook data.  Picks with fallback odds are excluded from parlay
+// recommendations because default odds reduce recommendation quality.
+function hasFallbackOdds(p) {
+  return parseFeatures(p.features)?.oddsFallback === true;
+}
+
 function probabilityProjection(p, features) {
   if (Number.isFinite(p.projection) && p.projection >= 0 && p.projection <= 1) {
     return p.projection;
@@ -494,8 +501,8 @@ export function buildParlays(predictions, selectedGamePks) {
   if (selectedGamePks !== undefined && selectedGamePks !== null) {
     const pkSet = selectedGamePks instanceof Set ? selectedGamePks : new Set(selectedGamePks);
     if (pkSet.size === 0) return [];
-    const strictPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing" && p.recommended);
-    const broaderPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing");
+    const strictPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing" && p.recommended && !hasFallbackOdds(p));
+    const broaderPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing" && !hasFallbackOdds(p));
     const fallbackPool = strictPool.length >= MIN_STRUCTURED_POOL_SIZE
       ? strictPool
       : broaderPool;
@@ -567,7 +574,7 @@ export function buildParlays(predictions, selectedGamePks) {
   }
 
   // ── Legacy time-window mode (Review page backward compat) ──────────────
-  const pool = predictions.filter((p) => p.data_quality === "ok");
+  const pool = predictions.filter((p) => p.data_quality === "ok" && !hasFallbackOdds(p));
   if (pool.length === 0) return [];
 
   const slots = splitPredictionsByTimeWindow(pool);
