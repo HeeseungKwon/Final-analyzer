@@ -170,8 +170,8 @@ function findOddsApiEvent(events, homeTeamName, awayTeamName) {
       const eHomeNick = lastName(eHomeNorm);
       const eAwayNick = lastName(eAwayNorm);
       return (
-        (eHomeNick === homeNick || eHomeNorm.includes(homeNorm) || homeNorm.includes(eHomeNorm)) &&
-        (eAwayNick === awayNick || eAwayNorm.includes(awayNorm) || awayNorm.includes(eAwayNorm))
+        (eHomeNick === homeNick || eHomeNorm.includes(homeNorm)) &&
+        (eAwayNick === awayNick || eAwayNorm.includes(awayNorm))
       );
     }) ?? null
   );
@@ -224,8 +224,13 @@ function extractPlayerPropFromOddsApi(propsData, market, playerName) {
       const descNorm = normalizeText(o.description ?? "");
       const nameMatch = playerTerms.length > 0 && playerTerms.every((t) => descNorm.includes(t));
       if (!nameMatch) return false;
-      if (expectedLine == null || o.point == null) return true;
-      return Math.abs(o.point - expectedLine) <= LINE_MATCH_TOLERANCE;
+      // When both expected line and API line are present they must match within
+      // tolerance.  If only one side is missing, accept the outcome — the
+      // player+market match is already a strong signal.
+      if (expectedLine != null && o.point != null) {
+        return Math.abs(o.point - expectedLine) <= LINE_MATCH_TOLERANCE;
+      }
+      return true;
     });
 
     if (!overOutcome) continue;
@@ -406,23 +411,21 @@ export async function fetchRealtimeOdds(gamePk, market, playerName, gameContext)
     return buildFallbackOdds(market, "missing-params");
   }
 
-  // 1. Try RapidAPI / The Odds API (requires VITE_RAPIDAPI_KEY + gameContext)
+  // 1. Try RapidAPI / The Odds API (requires VITE_RAPIDAPI_KEY + gameContext);
+  // tryRapidApiOdds handles missing key and gameContext internally.
   try {
-    const apiKey = getRapidApiKey();
-    if (apiKey && gameContext?.gameDate && gameContext?.homeTeamName && gameContext?.awayTeamName) {
-      const rapidResult = await tryRapidApiOdds(market, playerName, gameContext);
-      if (rapidResult) {
-        const impliedProbability = convertAmericanToImplied(rapidResult.marketOdds);
-        if (Number.isFinite(impliedProbability)) {
-          const value = {
-            ...rapidResult,
-            impliedProbability,
-            fallbackUsed: false,
-            fallbackReason: null,
-          };
-          oddsResultCache.set(cacheKey, { value, expiresAt: Date.now() + CACHE_TTL_MS });
-          return value;
-        }
+    const rapidResult = await tryRapidApiOdds(market, playerName, gameContext);
+    if (rapidResult) {
+      const impliedProbability = convertAmericanToImplied(rapidResult.marketOdds);
+      if (Number.isFinite(impliedProbability)) {
+        const value = {
+          ...rapidResult,
+          impliedProbability,
+          fallbackUsed: false,
+          fallbackReason: null,
+        };
+        oddsResultCache.set(cacheKey, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+        return value;
       }
     }
   } catch {
