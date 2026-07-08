@@ -157,18 +157,18 @@ function findOddsApiEvent(events, homeTeamName, awayTeamName) {
   if (!Array.isArray(events) || events.length === 0) return null;
   if (!homeTeamName || !awayTeamName) return null;
 
-  const lastName = (s) => s.split(" ").filter(Boolean).at(-1) ?? "";
+  const extractTeamNickname = (s) => s.split(" ").filter(Boolean).at(-1) ?? "";
   const homeNorm = normalizeTeamName(homeTeamName);
   const awayNorm = normalizeTeamName(awayTeamName);
-  const homeNick = lastName(homeNorm);
-  const awayNick = lastName(awayNorm);
+  const homeNick = extractTeamNickname(homeNorm);
+  const awayNick = extractTeamNickname(awayNorm);
 
   return (
     events.find((e) => {
       const eHomeNorm = normalizeTeamName(e.home_team ?? "");
       const eAwayNorm = normalizeTeamName(e.away_team ?? "");
-      const eHomeNick = lastName(eHomeNorm);
-      const eAwayNick = lastName(eAwayNorm);
+      const eHomeNick = extractTeamNickname(eHomeNorm);
+      const eAwayNick = extractTeamNickname(eAwayNorm);
       return (
         (eHomeNick === homeNick || eHomeNorm.includes(homeNorm)) &&
         (eAwayNick === awayNick || eAwayNorm.includes(awayNorm))
