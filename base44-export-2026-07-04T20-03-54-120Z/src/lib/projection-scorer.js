@@ -46,10 +46,24 @@ const MARKET_WEIGHTS = {
     confidence: 0.10,
     edge: 0.05,
   },
+  "hit_2": {
+    modelProb: 0.35,
+    expectedValue: 0.30,
+    marketMetrics: 0.20,
+    confidence: 0.10,
+    edge: 0.05,
+  },
   "2+ Total Bases": {
     modelProb: 0.35,
     expectedValue: 0.30,
     marketMetrics: 0.20, // Power profile
+    confidence: 0.10,
+    edge: 0.05,
+  },
+  "total_bases": {
+    modelProb: 0.35,
+    expectedValue: 0.30,
+    marketMetrics: 0.20,
     confidence: 0.10,
     edge: 0.05,
   },
@@ -103,7 +117,9 @@ const MARKET_PROBABILITY_CALIBRATION = {
   "1+ HR": MARKET_PROBABILITY_CALIBRATION_BASE.hr,
   "home_run": MARKET_PROBABILITY_CALIBRATION_BASE.hr,
   "2+ Hits": MARKET_PROBABILITY_CALIBRATION_BASE.hits2,
+  "hit_2": MARKET_PROBABILITY_CALIBRATION_BASE.hits2,
   "2+ Total Bases": MARKET_PROBABILITY_CALIBRATION_BASE.tb2,
+  "total_bases": MARKET_PROBABILITY_CALIBRATION_BASE.tb2,
   "3+ Total Bases": MARKET_PROBABILITY_CALIBRATION_BASE.tb3,
   "2+ HRR": MARKET_PROBABILITY_CALIBRATION_BASE.hrr2,
   "hrr_2": MARKET_PROBABILITY_CALIBRATION_BASE.hrr2,
@@ -452,12 +468,12 @@ export function rankPlayersByMarket(predictions, market) {
  */
 export function getAllMarketRankings(predictions) {
   const markets = [
-    "1+ HR",
-    "2+ Hits",
-    "2+ Total Bases",
-    "3+ Total Bases",
-    "hrr_2",
-    "2+ HRR",
+    "hit_2",        // 2+ Hits
+    "total_bases",  // TB O1.5
+    "home_run",     // Home Run
+    "hrr_2",        // HRR O1.5
+    "hrr_3",        // HRR O2.5
+    "strikeouts",   // Strikeouts (pitcher)
   ];
 
   const rankings = {};
