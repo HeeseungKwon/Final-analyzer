@@ -1,10 +1,23 @@
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb";
+const RAPIDAPI_HOST = "odds.p.rapidapi.com";
+const ODDS_API_SPORT = "baseball_mlb";
+
 const CACHE_TTL_MS = 5 * 60 * 1000;
 // Treat lines within roughly one tenth of a unit as equivalent so small API
 // representation differences (1.5 vs 1.49/1.6) do not block a usable match.
 const LINE_MATCH_TOLERANCE = 0.11;
 const MIN_CANDIDATE_SCORE = 7;
 const DEFAULT_FALLBACK_ODDS = -110;
+
+// Maps internal market names → The Odds API market keys
+const ODDS_API_MARKET_MAP = {
+  hit_2: "batter_hits",
+  total_bases: "batter_total_bases",
+  hrr_2: "batter_hits_runs_rbis",
+  hrr_3: "batter_hits_runs_rbis",
+  home_run: "batter_home_runs",
+  strikeouts: "pitcher_strikeouts",
+};
 
 // Realistic market-average implied probabilities (not odds)
 const DEFAULT_IMPLIED_PROBABILITIES = {
@@ -36,11 +49,24 @@ const MARKET_TERMS = {
 
 const payloadCache = new Map();
 const oddsResultCache = new Map();
+const oddsApiEventCache = new Map();
+const oddsApiPropsCache = new Map();
+
+// Preferred sportsbooks in priority order
+const PREFERRED_BOOKMAKERS = ["draftkings", "fanduel", "betmgm", "caesars", "pointsbetus", "wynnbet"];
 
 function normalizeText(value) {
   return String(value ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9+]+/g, " ")
+    .trim();
+}
+
+function normalizeTeamName(name) {
+  return String(name ?? "")
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, "")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -71,7 +97,7 @@ export function convertAmericanToImplied(americanOdds) {
   return odds < 0 ? Math.abs(odds) / (Math.abs(odds) + 100) : 100 / (odds + 100);
 }
 
-function buildFallbackOdds(market) {
+function buildFallbackOdds(market, reason = "no-match") {
   const impliedProbability = DEFAULT_IMPLIED_PROBABILITIES[market] ?? 0.5;
   return {
     marketOdds: impliedToAmerican(impliedProbability),
@@ -80,7 +106,17 @@ function buildFallbackOdds(market) {
     source: "fallback-default",
     provider: "fallback",
     fallbackUsed: true,
+    fallbackReason: reason,
+    eventId: null,
   };
+}
+
+function getRapidApiKey() {
+  try {
+    return import.meta.env?.VITE_RAPIDAPI_KEY || null;
+  } catch {
+    return null;
+  }
 }
 
 async function fetchJson(url) {
@@ -92,6 +128,148 @@ async function fetchJson(url) {
   }
   return response.json();
 }
+
+// ── RapidAPI / The Odds API integration ─────────────────────────────────────
+
+async function fetchOddsApiEvents(gameDate) {
+  const cached = oddsApiEventCache.get(gameDate);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+
+  const apiKey = getRapidApiKey();
+  if (!apiKey) return null;
+
+  const from = `${gameDate}T00:00:00Z`;
+  const to = `${gameDate}T23:59:59Z`;
+  const url = `https://${RAPIDAPI_HOST}/v4/sports/${ODDS_API_SPORT}/events?dateFormat=iso&commenceTimeFrom=${encodeURIComponent(from)}&commenceTimeTo=${encodeURIComponent(to)}`;
+  const response = await fetch(url, {
+    headers: {
+      "X-RapidAPI-Key": apiKey,
+      "X-RapidAPI-Host": RAPIDAPI_HOST,
+    },
+  });
+  if (!response.ok) throw new Error(`Odds API events ${response.status}`);
+  const data = await response.json();
+  oddsApiEventCache.set(gameDate, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+  return data;
+}
+
+function findOddsApiEvent(events, homeTeamName, awayTeamName) {
+  if (!Array.isArray(events) || events.length === 0) return null;
+  if (!homeTeamName || !awayTeamName) return null;
+
+  const extractTeamNickname = (s) => s.split(" ").filter(Boolean).at(-1) ?? "";
+  const homeNorm = normalizeTeamName(homeTeamName);
+  const awayNorm = normalizeTeamName(awayTeamName);
+  const homeNick = extractTeamNickname(homeNorm);
+  const awayNick = extractTeamNickname(awayNorm);
+
+  return (
+    events.find((e) => {
+      const eHomeNorm = normalizeTeamName(e.home_team ?? "");
+      const eAwayNorm = normalizeTeamName(e.away_team ?? "");
+      const eHomeNick = extractTeamNickname(eHomeNorm);
+      const eAwayNick = extractTeamNickname(eAwayNorm);
+      return (
+        (eHomeNick === homeNick || eHomeNorm.includes(homeNorm)) &&
+        (eAwayNick === awayNick || eAwayNorm.includes(awayNorm))
+      );
+    }) ?? null
+  );
+}
+
+async function fetchOddsApiProps(eventId, market) {
+  const cacheKey = `${eventId}:${market}`;
+  const cached = oddsApiPropsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+
+  const apiKey = getRapidApiKey();
+  if (!apiKey) return null;
+
+  const apiMarket = ODDS_API_MARKET_MAP[market];
+  if (!apiMarket) return null;
+
+  const books = PREFERRED_BOOKMAKERS.join(",");
+  const url = `https://${RAPIDAPI_HOST}/v4/sports/${ODDS_API_SPORT}/events/${encodeURIComponent(eventId)}/odds?regions=us&markets=${apiMarket}&oddsFormat=american&bookmakers=${books}`;
+  const response = await fetch(url, {
+    headers: {
+      "X-RapidAPI-Key": apiKey,
+      "X-RapidAPI-Host": RAPIDAPI_HOST,
+    },
+  });
+  if (!response.ok) throw new Error(`Odds API props ${response.status}`);
+  const data = await response.json();
+  oddsApiPropsCache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+  return data;
+}
+
+function extractPlayerPropFromOddsApi(propsData, market, playerName) {
+  if (!propsData?.bookmakers?.length || !playerName) return null;
+
+  const playerNorm = normalizeText(playerName);
+  const playerTerms = playerNorm.split(" ").filter(Boolean);
+  const apiMarket = ODDS_API_MARKET_MAP[market];
+  if (!apiMarket) return null;
+
+  const expectedLine = DEFAULT_MARKET_LINES[market];
+
+  for (const bookKey of PREFERRED_BOOKMAKERS) {
+    const book = propsData.bookmakers.find((b) => b.key === bookKey);
+    if (!book) continue;
+
+    const marketData = book.markets?.find((m) => m.key === apiMarket);
+    if (!marketData?.outcomes?.length) continue;
+
+    const overOutcome = marketData.outcomes.find((o) => {
+      if (String(o.name ?? "").toLowerCase() !== "over") return false;
+      const descNorm = normalizeText(o.description ?? "");
+      const nameMatch = playerTerms.length > 0 && playerTerms.every((t) => descNorm.includes(t));
+      if (!nameMatch) return false;
+      // When both expected line and API line are present they must match within
+      // tolerance.  If only one side is missing, accept the outcome — the
+      // player+market match is already a strong signal.
+      if (expectedLine != null && o.point != null) {
+        return Math.abs(o.point - expectedLine) <= LINE_MATCH_TOLERANCE;
+      }
+      return true;
+    });
+
+    if (!overOutcome) continue;
+
+    const odds = parseAmericanOdds(overOutcome.price);
+    if (odds == null) continue;
+
+    return {
+      marketOdds: odds,
+      marketLine: parseLineValue(overOutcome.point) ?? expectedLine,
+      provider: book.title ?? bookKey,
+      source: "rapidapi-odds",
+      eventId: propsData.id,
+    };
+  }
+
+  return null;
+}
+
+async function tryRapidApiOdds(market, playerName, gameContext) {
+  const apiKey = getRapidApiKey();
+  if (!apiKey) return null;
+
+  const { gameDate, homeTeamName, awayTeamName } = gameContext ?? {};
+  if (!gameDate || !homeTeamName || !awayTeamName) return null;
+
+  const events = await fetchOddsApiEvents(gameDate);
+  if (!Array.isArray(events) || events.length === 0) return null;
+
+  const event = findOddsApiEvent(events, homeTeamName, awayTeamName);
+  if (!event) return null;
+
+  const propsData = await fetchOddsApiProps(event.id, market);
+  if (!propsData) return null;
+
+  return extractPlayerPropFromOddsApi(propsData, market, playerName);
+}
+
+// ── ESPN extraction ──────────────────────────────────────────────────────────
 
 async function fetchCachedPayload(key, url) {
   const cached = payloadCache.get(key);
@@ -222,54 +400,79 @@ function candidateScore(candidate, market, playerTerms) {
   return score;
 }
 
-export async function fetchRealtimeOdds(gamePk, market, playerName) {
+export async function fetchRealtimeOdds(gamePk, market, playerName, gameContext) {
   const cacheKey = `${gamePk}:${market}:${normalizeText(playerName)}`;
   const cached = oddsResultCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.value;
   }
 
-  const fallback = buildFallbackOdds(market);
-
-  if (!gamePk || !market || !playerName) {
-    return fallback;
+  if (!gamePk || !market) {
+    return buildFallbackOdds(market, "missing-params");
   }
 
+  // 1. Try RapidAPI / The Odds API (requires VITE_RAPIDAPI_KEY + gameContext);
+  // tryRapidApiOdds handles missing key and gameContext internally.
   try {
-    const response = await getEspnPayload(gamePk);
-    if (!response?.payload) return fallback;
-
-    const candidates = collectOddsCandidates(response.payload);
-    if (candidates.length === 0) return fallback;
-    const playerTerms = normalizeText(playerName).split(" ").filter(Boolean);
-
-    const best = candidates
-      .map((candidate) => ({
-        ...candidate,
-        score: candidateScore(candidate, market, playerTerms),
-      }))
-      .filter((candidate) => candidate.score >= MIN_CANDIDATE_SCORE)
-      .sort((a, b) => b.score - a.score)[0];
-
-    if (!best) return fallback;
-
-    const impliedProbability = convertAmericanToImplied(best.marketOdds);
-    if (!Number.isFinite(impliedProbability)) return fallback;
-
-    const value = {
-      marketOdds: best.marketOdds,
-      impliedProbability,
-      marketLine: best.marketLine ?? fallback.marketLine,
-      source: response.source,
-      provider: best.provider,
-      fallbackUsed: false,
-    };
-    oddsResultCache.set(cacheKey, {
-      value,
-      expiresAt: Date.now() + CACHE_TTL_MS,
-    });
-    return value;
+    const rapidResult = await tryRapidApiOdds(market, playerName, gameContext);
+    if (rapidResult) {
+      const impliedProbability = convertAmericanToImplied(rapidResult.marketOdds);
+      if (Number.isFinite(impliedProbability)) {
+        const value = {
+          ...rapidResult,
+          impliedProbability,
+          fallbackUsed: false,
+          fallbackReason: null,
+        };
+        oddsResultCache.set(cacheKey, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+        return value;
+      }
+    }
   } catch {
-    return fallback;
+    // Fall through to ESPN.
   }
+
+  // 2. Try ESPN extraction
+  if (playerName) {
+    try {
+      const response = await getEspnPayload(gamePk);
+      if (response?.payload) {
+        const candidates = collectOddsCandidates(response.payload);
+        if (candidates.length > 0) {
+          const playerTerms = normalizeText(playerName).split(" ").filter(Boolean);
+          const best = candidates
+            .map((candidate) => ({
+              ...candidate,
+              score: candidateScore(candidate, market, playerTerms),
+            }))
+            .filter((candidate) => candidate.score >= MIN_CANDIDATE_SCORE)
+            .sort((a, b) => b.score - a.score)[0];
+
+          if (best) {
+            const impliedProbability = convertAmericanToImplied(best.marketOdds);
+            if (Number.isFinite(impliedProbability)) {
+              const value = {
+                marketOdds: best.marketOdds,
+                impliedProbability,
+                marketLine: best.marketLine ?? DEFAULT_MARKET_LINES[market] ?? null,
+                source: response.source,
+                provider: best.provider,
+                fallbackUsed: false,
+                fallbackReason: null,
+                eventId: null,
+              };
+              oddsResultCache.set(cacheKey, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+              return value;
+            }
+          }
+        }
+      }
+    } catch {
+      // Fall through to market defaults.
+    }
+  }
+
+  // 3. Market-average defaults — marked as fallback so parlays can exclude them
+  const fallbackReason = !getRapidApiKey() ? "api-key-missing" : "no-match";
+  return buildFallbackOdds(market, fallbackReason);
 }
