@@ -102,6 +102,13 @@ const MARKET_WEIGHTS = {
     confidence: 0.10,
     edge: 0.05,
   },
+  "strikeouts": {
+    modelProb: 0.35,
+    expectedValue: 0.30,
+    marketMetrics: 0.20,
+    confidence: 0.10,
+    edge: 0.05,
+  },
 };
 
 const MARKET_PROBABILITY_CALIBRATION_BASE = {
