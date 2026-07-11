@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { runAnalysis } from "@/lib/analysis-runner";
 import { useToast } from "@/components/ui/use-toast";
 import { MARKETS_FOR_FILTERS, getMarketProjectionUnit } from "@/lib/constants/markets";
@@ -25,11 +26,32 @@ function isFinalGameStatus(status) {
   return s.includes("final") || s.includes("game over") || s.includes("completed");
 }
 
+function getTodayProjectionLabel(market) {
+  const labels = {
+    hit_2: "Exp. Hits",
+    total_bases: "Exp. TB",
+    hrr_2: "Exp. HRR",
+    hrr_3: "Exp. HRR",
+  };
+  return labels[market] ?? getMarketProjectionUnit(market)?.label;
+}
+
+function getTodayProjectionDescription(market) {
+  const descriptions = {
+    hit_2: "Proj = model-estimated hits count (not P(2+ hits)).",
+    total_bases: "Proj = model-estimated total bases count (not P(TB ≥ 2)).",
+    hrr_2: "Proj = model-estimated hits + runs + RBIs count (not P(HRR ≥ 2)).",
+    hrr_3: "Proj = model-estimated hits + runs + RBIs count (not P(HRR ≥ 3)).",
+  };
+  return descriptions[market] ?? null;
+}
+
 export default function Today() {
   const [date, setDate] = useState(todayStr());
   const [market, setMarket] = useState("all");
   const [onlyRec, setOnlyRec] = useState(false);
   const [expanded, setExpanded] = useState({});
+  const [collapsedGames, setCollapsedGames] = useState({});
   const [progress, setProgress] = useState("");
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -112,13 +134,14 @@ export default function Today() {
 
       {market !== "all" && getMarketProjectionUnit(market) && (
         <div className="mb-4 rounded border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          <b className="text-foreground">Proj</b> = {getMarketProjectionUnit(market).label} —{" "}
-          {getMarketProjectionUnit(market).description}{" "}
-          {getMarketProjectionUnit(market).unit === "probability"
-            ? "Values are 0.000–1.000 (multiply by 100 for %)."
-            : "Values are expected counts."}{" "}
-          <b className="text-foreground">Floor</b> / <b className="text-foreground">Ceiling</b> are the same unit (10th/90th-percentile band).{" "}
-          Picks are recommended when our model probability exceeds market implied probability (edge {'>'} 0).
+          <b className="text-foreground">Proj</b> = {getTodayProjectionLabel(market)} —{" "}
+          {getTodayProjectionDescription(market) ?? getMarketProjectionUnit(market).description}{" "}
+          {getTodayProjectionDescription(market)
+            ? "Values are expected counts."
+            : getMarketProjectionUnit(market).unit === "probability"
+              ? "Values are 0.000–1.000 (multiply by 100 for %)."
+              : "Values are expected counts."}{" "}
+          <b className="text-foreground">Floor</b> / <b className="text-foreground">Ceiling</b> still show model probability bands in expanded details. Picks are recommended when our model probability exceeds market implied probability (edge {'>'} 0).
         </div>
       )}
 
@@ -137,6 +160,8 @@ export default function Today() {
         <div className="space-y-6">
           {games.map((g) => {
             const rowsForGame = predictions.filter((p) => p.game_pk === g.game_pk);
+            const gameKey = String(g.game_pk ?? g.id);
+            const isGameCollapsed = !!collapsedGames[gameKey];
             if (rowsForGame.length === 0 && market !== "all") return null;
             return (
               <Card key={g.id}>
@@ -147,9 +172,32 @@ export default function Today() {
                       {g.venue_name ?? ""} · {g.game_time_utc ? new Date(g.game_time_utc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
                     </span>
                   </CardTitle>
-                  <Badge variant="secondary">{g.status}</Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary">{g.status}</Badge>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1 px-2 text-xs"
+                      aria-expanded={!isGameCollapsed}
+                      aria-controls={`game-picks-${gameKey}`}
+                      onClick={() => setCollapsedGames((prev) => ({ ...prev, [gameKey]: !prev[gameKey] }))}
+                    >
+                      {isGameCollapsed ? (
+                        <>
+                          <ChevronDown className="h-3 w-3" />
+                          펼치기
+                        </>
+                      ) : (
+                        <>
+                          <ChevronUp className="h-3 w-3" />
+                          접기
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent id={`game-picks-${gameKey}`} className={isGameCollapsed ? "hidden" : undefined}>
                   <div className="mb-3 flex flex-wrap gap-3 text-xs">
                     <span className="rounded bg-muted px-2 py-1"><b>{g.away_team_name}</b> SP: {g.away_probable_pitcher_name || "TBD"}</span>
                     <span className="rounded bg-muted px-2 py-1"><b>{g.home_team_name}</b> SP: {g.home_probable_pitcher_name || "TBD"}</span>
@@ -164,7 +212,7 @@ export default function Today() {
                             <TableHead>Player</TableHead>
                             <TableHead>Market</TableHead>
             <TableHead className="text-right">
-                              Proj{market !== "all" && getMarketProjectionUnit(market) ? ` (${getMarketProjectionUnit(market).label})` : ""}
+                              Proj{market !== "all" && getTodayProjectionLabel(market) ? ` (${getTodayProjectionLabel(market)})` : ""}
                              </TableHead>
                              <TableHead>Trigger</TableHead>
                             <TableHead className="text-right">Edge / Rec</TableHead>

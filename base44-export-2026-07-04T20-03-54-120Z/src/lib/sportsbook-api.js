@@ -1,12 +1,14 @@
-// Real-time MLB sportsbook odds via The Odds API (RapidAPI) with ESPN fallback.
+// Real-time MLB sportsbook odds via RapidAPI with ESPN fallback.
 //
 // Priority chain:
 //   1. The Odds API via RapidAPI  (when VITE_RAPIDAPI_KEY is configured)
-//   2. ESPN summary / scoreboard API extraction
-//   3. Market-average defaults    (fallbackUsed: true, fallbackReason set)
+//   2. JsonOdds via RapidAPI      (when VITE_JSONODDS_RAPIDAPI_KEY or VITE_RAPIDAPI_KEY is configured)
+//   3. ESPN summary / scoreboard API extraction
+//   4. Market-average defaults    (fallbackUsed: true, fallbackReason set)
 
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb";
-const RAPIDAPI_HOST = "odds.p.rapidapi.com";
+const ODDS_API_RAPIDAPI_HOST = "odds.p.rapidapi.com";
+const JSONODDS_RAPIDAPI_HOST = "jsonjames-jsonodds-v1.p.rapidapi.com";
 const ODDS_API_SPORT = "baseball_mlb";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -14,6 +16,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const LINE_MATCH_TOLERANCE = 0.11;
 const MIN_CANDIDATE_SCORE = 7;
 const DEFAULT_FALLBACK_ODDS = -110;
+const FALLBACK_REASON_RAPIDAPI_NOT_CONFIGURED = "rapidapi-not-configured";
 
 // Maps internal market names → The Odds API market keys
 const ODDS_API_MARKET_MAP = {
@@ -121,12 +124,28 @@ function buildFallbackOdds(market, reason = "no-match") {
   };
 }
 
-function getRapidApiKey() {
-  try {
-    return import.meta.env?.VITE_RAPIDAPI_KEY || null;
-  } catch {
-    return null;
-  }
+function getEnvValue(key) {
+  return import.meta.env?.[key] || null;
+}
+
+function getOddsApiRapidApiKey() {
+  return getEnvValue("VITE_ODDS_API_RAPIDAPI_KEY") || getEnvValue("VITE_RAPIDAPI_KEY");
+}
+
+function getJsonOddsRapidApiKey() {
+  return getEnvValue("VITE_JSONODDS_RAPIDAPI_KEY") || getEnvValue("VITE_RAPIDAPI_KEY");
+}
+
+function hasAnyRapidApiKey() {
+  return Boolean(getOddsApiRapidApiKey() || getJsonOddsRapidApiKey());
+}
+
+function getRapidApiHeaders(apiKey, host) {
+  return {
+    "Content-Type": "application/json",
+    "x-rapidapi-key": apiKey,
+    "x-rapidapi-host": host,
+  };
 }
 
 // ── RapidAPI / The Odds API integration ─────────────────────────────────────
@@ -135,17 +154,14 @@ async function fetchOddsApiEvents(gameDate) {
   const cached = oddsApiEventCache.get(gameDate);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
 
-  const apiKey = getRapidApiKey();
+  const apiKey = getOddsApiRapidApiKey();
   if (!apiKey) return null;
 
   const from = `${gameDate}T00:00:00Z`;
   const to = `${gameDate}T23:59:59Z`;
-  const url = `https://${RAPIDAPI_HOST}/v4/sports/${ODDS_API_SPORT}/events?dateFormat=iso&commenceTimeFrom=${encodeURIComponent(from)}&commenceTimeTo=${encodeURIComponent(to)}`;
+  const url = `https://${ODDS_API_RAPIDAPI_HOST}/v4/sports/${ODDS_API_SPORT}/events?dateFormat=iso&commenceTimeFrom=${encodeURIComponent(from)}&commenceTimeTo=${encodeURIComponent(to)}`;
   const response = await fetch(url, {
-    headers: {
-      "X-RapidAPI-Key": apiKey,
-      "X-RapidAPI-Host": RAPIDAPI_HOST,
-    },
+    headers: getRapidApiHeaders(apiKey, ODDS_API_RAPIDAPI_HOST),
   });
   if (!response.ok) throw new Error(`Odds API events ${response.status}`);
   const data = await response.json();
@@ -184,19 +200,16 @@ async function fetchOddsApiProps(eventId, market) {
   const cached = oddsApiPropsCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
 
-  const apiKey = getRapidApiKey();
+  const apiKey = getOddsApiRapidApiKey();
   if (!apiKey) return null;
 
   const apiMarket = ODDS_API_MARKET_MAP[market];
   if (!apiMarket) return null;
 
   const books = PREFERRED_BOOKMAKERS.join(",");
-  const url = `https://${RAPIDAPI_HOST}/v4/sports/${ODDS_API_SPORT}/events/${encodeURIComponent(eventId)}/odds?regions=us&markets=${apiMarket}&oddsFormat=american&bookmakers=${books}`;
+  const url = `https://${ODDS_API_RAPIDAPI_HOST}/v4/sports/${ODDS_API_SPORT}/events/${encodeURIComponent(eventId)}/odds?regions=us&markets=${apiMarket}&oddsFormat=american&bookmakers=${books}`;
   const response = await fetch(url, {
-    headers: {
-      "X-RapidAPI-Key": apiKey,
-      "X-RapidAPI-Host": RAPIDAPI_HOST,
-    },
+    headers: getRapidApiHeaders(apiKey, ODDS_API_RAPIDAPI_HOST),
   });
   if (!response.ok) throw new Error(`Odds API props ${response.status}`);
   const data = await response.json();
@@ -253,7 +266,7 @@ function extractPlayerPropFromOddsApi(propsData, market, playerName) {
 }
 
 async function tryRapidApiOdds(market, playerName, gameContext) {
-  const apiKey = getRapidApiKey();
+  const apiKey = getOddsApiRapidApiKey();
   if (!apiKey) return null;
 
   const { gameDate, homeTeamName, awayTeamName } = gameContext ?? {};
@@ -269,6 +282,24 @@ async function tryRapidApiOdds(market, playerName, gameContext) {
   if (!propsData) return null;
 
   return extractPlayerPropFromOddsApi(propsData, market, playerName);
+}
+
+
+async function verifyJsonOddsRapidApiAccess() {
+  const apiKey = getJsonOddsRapidApiKey();
+  if (!apiKey) return null;
+
+  const cacheKey = "jsonodds:sports";
+  const cached = oddsApiEventCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+
+  const response = await fetch(`https://${JSONODDS_RAPIDAPI_HOST}/api/sports`, {
+    headers: getRapidApiHeaders(apiKey, JSONODDS_RAPIDAPI_HOST),
+  });
+  if (!response.ok) throw new Error(`JsonOdds sports ${response.status}`);
+  const data = await response.json();
+  oddsApiEventCache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+  return data;
 }
 
 // ── ESPN extraction ──────────────────────────────────────────────────────────
@@ -422,7 +453,17 @@ export async function fetchRealtimeOdds(gamePk, market, playerName, gameContext)
     // Fall through to ESPN.
   }
 
-  // 2. Try ESPN extraction
+  // 2. If the user configured the JsonOdds RapidAPI app, verify the key/host pair
+  // before falling through. JsonOdds does not expose MLB player props, so it cannot
+  // directly price these player markets; this turns an auth problem into a normal
+  // no-match fallback instead of incorrectly reporting a missing-key fallback.
+  try {
+    await verifyJsonOddsRapidApiAccess();
+  } catch {
+    // Fall through to ESPN.
+  }
+
+  // 3. Try ESPN extraction
   if (playerName) {
     try {
       const espnResult = await tryEspnOdds(gamePk, market, playerName);
@@ -436,7 +477,7 @@ export async function fetchRealtimeOdds(gamePk, market, playerName, gameContext)
     }
   }
 
-  // 3. Market-average defaults — mark as fallback so parlays can exclude them
-  const fallbackReason = !getRapidApiKey() ? "api-key-missing" : "no-match";
+  // 4. Market-average defaults — mark as fallback so parlays can exclude them
+  const fallbackReason = !hasAnyRapidApiKey() ? FALLBACK_REASON_RAPIDAPI_NOT_CONFIGURED : "no-match";
   return buildFallbackOdds(market, fallbackReason);
 }
