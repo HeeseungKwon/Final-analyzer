@@ -91,6 +91,7 @@ function fmtProjection(p) {
   return fmt(getCountProjectionValue(p), 2);
 }
 
+
 export default function PredRow({ p, expanded, onToggle }) {
   let features = {};
   try {
