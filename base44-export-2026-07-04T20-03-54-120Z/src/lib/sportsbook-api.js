@@ -16,6 +16,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const LINE_MATCH_TOLERANCE = 0.11;
 const MIN_CANDIDATE_SCORE = 7;
 const DEFAULT_FALLBACK_ODDS = -110;
+const FALLBACK_REASON_RAPIDAPI_NOT_CONFIGURED = "rapidapi-not-configured";
 
 // Maps internal market names → The Odds API market keys
 const ODDS_API_MARKET_MAP = {
@@ -455,7 +456,7 @@ export async function fetchRealtimeOdds(gamePk, market, playerName, gameContext)
   // 2. If the user configured the JsonOdds RapidAPI app, verify the key/host pair
   // before falling through. JsonOdds does not expose MLB player props, so it cannot
   // directly price these player markets; this turns an auth problem into a normal
-  // no-match fallback instead of incorrectly reporting api-key-missing.
+  // no-match fallback instead of incorrectly reporting a missing-key fallback.
   try {
     await verifyJsonOddsRapidApiAccess();
   } catch {
@@ -477,6 +478,6 @@ export async function fetchRealtimeOdds(gamePk, market, playerName, gameContext)
   }
 
   // 4. Market-average defaults — mark as fallback so parlays can exclude them
-  const fallbackReason = !hasAnyRapidApiKey() ? "api-key-missing" : "no-match";
+  const fallbackReason = !hasAnyRapidApiKey() ? FALLBACK_REASON_RAPIDAPI_NOT_CONFIGURED : "no-match";
   return buildFallbackOdds(market, fallbackReason);
 }
