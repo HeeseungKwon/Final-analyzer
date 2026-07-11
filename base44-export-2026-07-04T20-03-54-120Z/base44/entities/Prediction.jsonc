@@ -38,6 +38,24 @@
     "projection": {
       "type": "number"
     },
+    "expected_hits": {
+      "type": "number"
+    },
+    "expected_total_bases": {
+      "type": "number"
+    },
+    "expected_home_runs": {
+      "type": "number"
+    },
+    "expected_runs": {
+      "type": "number"
+    },
+    "expected_rbi": {
+      "type": "number"
+    },
+    "expected_hrr": {
+      "type": "number"
+    },
     "floor": {
       "type": "number"
     },

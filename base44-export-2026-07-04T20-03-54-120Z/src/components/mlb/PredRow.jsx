@@ -63,6 +63,34 @@ function fmtAmerican(odds) {
   return value > 0 ? `+${value}` : `${value}`;
 }
 
+function formatOddsFallbackReason(reason) {
+  const labels = {
+    "api-key-missing": "RapidAPI key not configured",
+    "rapidapi-not-configured": "RapidAPI key not configured",
+    "missing-params": "Missing game data",
+    "no-match": "No sportsbook match",
+  };
+  return labels[reason] ?? reason;
+}
+
+function getCountProjectionValue(p) {
+  switch (p.market) {
+    case "hit_2":
+      return p.expected_hits;
+    case "total_bases":
+      return p.expected_total_bases;
+    case "hrr_2":
+    case "hrr_3":
+      return p.expected_hrr;
+    default:
+      return p.projection;
+  }
+}
+
+function fmtProjection(p) {
+  return fmt(getCountProjectionValue(p), 2);
+}
+
 export default function PredRow({ p, expanded, onToggle }) {
   let features = {};
   try {
@@ -86,9 +114,11 @@ export default function PredRow({ p, expanded, onToggle }) {
   const oddsProvider = features?.sportsbookProvider ?? null;
   const oddsFallback = features?.oddsFallback ?? null;
   const oddsFallbackReason = features?.oddsFallbackReason ?? null;
+  const oddsStatusReason = oddsFallbackReason ? formatOddsFallbackReason(oddsFallbackReason) : null;
   const tbOver15Prob = features?.tbOver1_5Prob;
   const hrrOver15Prob = features?.hrrOver1_5Prob;
   const hrrOver25Prob = features?.hrrOver2_5Prob;
+  const recommendationReasons = Array.isArray(features?.recommendationReasons) ? features.recommendationReasons : [];
 
   const { letterGrade, numericGrade } = computePickGrade(p);
 
@@ -110,7 +140,7 @@ export default function PredRow({ p, expanded, onToggle }) {
           </div>
         </TableCell>
         <TableCell>{getMarketLabel(p.market, "short")}</TableCell>
-        <TableCell className="text-right tabular-nums">{fmt(p.projection, 3)}</TableCell>
+        <TableCell className="text-right tabular-nums">{fmtProjection(p)}</TableCell>
         <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{p.trigger_text}</TableCell>
         <TableCell className="text-right">
           <div className="flex items-center justify-end gap-1">
@@ -182,7 +212,7 @@ export default function PredRow({ p, expanded, onToggle }) {
                     <div>
                       <div className="text-muted-foreground">Odds Status</div>
                       <div className="font-semibold">
-                        {oddsFallback ? `Fallback${oddsFallbackReason ? ` (${oddsFallbackReason})` : ""}` : "Live"}
+                        {oddsFallback ? `Fallback${oddsStatusReason ? ` (${oddsStatusReason})` : ""}` : "Live"}
                       </div>
                     </div>
                     <div>
@@ -221,13 +251,24 @@ export default function PredRow({ p, expanded, onToggle }) {
                 </div>
               )}
 
+              {recommendationReasons.length > 0 && (
+                <div className="border-t border-border/40 pt-2">
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Recommendation Drivers</div>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    {recommendationReasons.map((reason) => (
+                      <span key={reason} className="rounded bg-muted px-2 py-0.5 font-medium">{reason}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Feature Breakdown */}
               {Object.keys(features).length > 0 && (
                 <div className="border-t border-border/40 pt-2">
                   <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Features</div>
                   <div className="flex flex-wrap gap-2 text-xs">
                     {Object.entries(features)
-                      .filter(([k]) => !["verdict", "verdictNote"].includes(k))
+                      .filter(([k, v]) => !["verdict", "verdictNote", "recommendationReasons", "recommendationComponents"].includes(k) && (v == null || typeof v !== "object"))
                       .map(([k, v]) => (
                         <span key={k} className="rounded bg-muted px-2 py-0.5">
                           <span className="text-muted-foreground">{k}:</span>{" "}
