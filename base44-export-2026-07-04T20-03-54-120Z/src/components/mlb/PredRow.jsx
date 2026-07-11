@@ -63,6 +63,16 @@ function fmtAmerican(odds) {
   return value > 0 ? `+${value}` : `${value}`;
 }
 
+function formatOddsFallbackReason(reason) {
+  const labels = {
+    "api-key-missing": "RapidAPI key not configured",
+    "rapidapi-not-configured": "RapidAPI key not configured",
+    "missing-params": "Missing game data",
+    "no-match": "No sportsbook match",
+  };
+  return labels[reason] ?? reason;
+}
+
 export default function PredRow({ p, expanded, onToggle }) {
   let features = {};
   try {
@@ -86,6 +96,7 @@ export default function PredRow({ p, expanded, onToggle }) {
   const oddsProvider = features?.sportsbookProvider ?? null;
   const oddsFallback = features?.oddsFallback ?? null;
   const oddsFallbackReason = features?.oddsFallbackReason ?? null;
+  const oddsStatusReason = oddsFallbackReason ? formatOddsFallbackReason(oddsFallbackReason) : null;
   const tbOver15Prob = features?.tbOver1_5Prob;
   const hrrOver15Prob = features?.hrrOver1_5Prob;
   const hrrOver25Prob = features?.hrrOver2_5Prob;
@@ -182,7 +193,7 @@ export default function PredRow({ p, expanded, onToggle }) {
                     <div>
                       <div className="text-muted-foreground">Odds Status</div>
                       <div className="font-semibold">
-                        {oddsFallback ? `Fallback${oddsFallbackReason ? ` (${oddsFallbackReason})` : ""}` : "Live"}
+                        {oddsFallback ? `Fallback${oddsStatusReason ? ` (${oddsStatusReason})` : ""}` : "Live"}
                       </div>
                     </div>
                     <div>
