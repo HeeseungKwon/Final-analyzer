@@ -44,6 +44,15 @@
     "expected_total_bases": {
       "type": "number"
     },
+    "expected_home_runs": {
+      "type": "number"
+    },
+    "expected_runs": {
+      "type": "number"
+    },
+    "expected_rbi": {
+      "type": "number"
+    },
     "expected_hrr": {
       "type": "number"
     },

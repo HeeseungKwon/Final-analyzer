@@ -34,11 +34,11 @@ function parseFeatures(raw) {
 function rebalanceRecommendations(rows) {
   rows.forEach((row) => {
     const features = parseFeatures(row.features);
-    // Backward-compatibility note: downstream pages/entities still read the
-    // legacy `rec_score` field, so edge is mirrored there as percentage points
-    // (for example +6.5). All new edge-aware consumers should prefer
-    // `features.edge` / `features.modelEdge`.
-    row.rec_score = edgeToRecScore(features.edge);
+    // Downstream pages/entities still read the legacy `rec_score` field, so it
+    // now carries the probability-first recommendation score when available.
+    row.rec_score = Number.isFinite(Number(features.recommendationScore))
+      ? Math.round(Number(features.recommendationScore) * 100) / 100
+      : edgeToRecScore(features.edge);
     row.recommended = Boolean(features.recommended ?? row.recommended);
   });
 }
@@ -105,6 +105,9 @@ function buildEdgeFeatures(baseFeatures, edgeMetrics, oddsInfo) {
     kellyFraction: edgeMetrics.kellyFraction,
     recommendedStake: edgeMetrics.recommendedStake,
     edgeGrade: edgeMetrics.edgeGrade,
+    recommendationScore: edgeMetrics.recommendationScore,
+    recommendationComponents: edgeMetrics.recommendationComponents,
+    recommendationReasons: edgeMetrics.recommendationReasons,
     oddsSource: oddsInfo.source,
     sportsbookProvider: oddsInfo.provider,
     oddsFallback: oddsInfo.fallbackUsed,
@@ -311,6 +314,8 @@ export async function runAnalysis(dateArg, onProgress) {
               marketOdds: oddsInfo.marketOdds,
               impliedProbability: oddsInfo.impliedProbability,
               marketLine: oddsInfo.marketLine,
+              triggerStrength: s.triggerStrength,
+              features: s.features,
             });
             const features = buildEdgeFeatures(s.features, edgeMetrics, oddsInfo);
 
@@ -333,9 +338,9 @@ export async function runAnalysis(dateArg, onProgress) {
               features: JSON.stringify(features),
               data_quality: s.dataQuality,
               recommended: edgeMetrics.recommended,
-              rec_score: edgeToRecScore(edgeMetrics.edge),
+              rec_score: Math.round(edgeMetrics.recommendationScore * 100) / 100,
               verdict: edgeMetrics.recommended ? "recommended" : edgeMetrics.edge > 0 ? "marginal" : "avoid",
-              verdict_note: `Model ${(edgeMetrics.modelProbability * 100).toFixed(1)}% vs market ${(edgeMetrics.impliedProbability * 100).toFixed(1)}% (${edgeMetrics.marketOdds > 0 ? "+" : ""}${edgeMetrics.marketOdds})`,
+              verdict_note: `Score ${edgeMetrics.recommendationScore.toFixed(1)} · Model ${(edgeMetrics.modelProbability * 100).toFixed(1)}% vs market ${(edgeMetrics.impliedProbability * 100).toFixed(1)}% (${edgeMetrics.marketOdds > 0 ? "+" : ""}${edgeMetrics.marketOdds})`,
             };
             
             // Enrich with market-specific projection scores
@@ -424,6 +429,8 @@ export async function runAnalysis(dateArg, onProgress) {
             marketOdds: oddsInfo.marketOdds,
             impliedProbability: oddsInfo.impliedProbability,
             marketLine: oddsInfo.marketLine,
+            triggerStrength: s.triggerStrength,
+            features: s.features,
           });
 
           predictionRows.push({
@@ -444,9 +451,9 @@ export async function runAnalysis(dateArg, onProgress) {
             features: JSON.stringify(buildEdgeFeatures(s.features, edgeMetrics, oddsInfo)),
             data_quality: s.dataQuality,
             recommended: edgeMetrics.recommended,
-            rec_score: edgeToRecScore(edgeMetrics.edge),
+            rec_score: Math.round(edgeMetrics.recommendationScore * 100) / 100,
             verdict: edgeMetrics.recommended ? "recommended" : edgeMetrics.edge > 0 ? "marginal" : "avoid",
-            verdict_note: `Model ${(edgeMetrics.modelProbability * 100).toFixed(1)}% vs market ${(edgeMetrics.impliedProbability * 100).toFixed(1)}% (${edgeMetrics.marketOdds > 0 ? "+" : ""}${edgeMetrics.marketOdds})`,
+            verdict_note: `Score ${edgeMetrics.recommendationScore.toFixed(1)} · Model ${(edgeMetrics.modelProbability * 100).toFixed(1)}% vs market ${(edgeMetrics.impliedProbability * 100).toFixed(1)}% (${edgeMetrics.marketOdds > 0 ? "+" : ""}${edgeMetrics.marketOdds})`,
           });
         }
       } catch (e) {
