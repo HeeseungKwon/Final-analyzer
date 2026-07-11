@@ -26,6 +26,26 @@ function isFinalGameStatus(status) {
   return s.includes("final") || s.includes("game over") || s.includes("completed");
 }
 
+function getTodayProjectionLabel(market) {
+  const labels = {
+    hit_2: "Exp. Hits",
+    total_bases: "Exp. TB",
+    hrr_2: "Exp. HRR",
+    hrr_3: "Exp. HRR",
+  };
+  return labels[market] ?? getMarketProjectionUnit(market)?.label;
+}
+
+function getTodayProjectionDescription(market) {
+  const descriptions = {
+    hit_2: "Proj = model-estimated hits count (not P(2+ hits)).",
+    total_bases: "Proj = model-estimated total bases count (not P(TB ≥ 2)).",
+    hrr_2: "Proj = model-estimated hits + runs + RBIs count (not P(HRR ≥ 2)).",
+    hrr_3: "Proj = model-estimated hits + runs + RBIs count (not P(HRR ≥ 3)).",
+  };
+  return descriptions[market] ?? null;
+}
+
 export default function Today() {
   const [date, setDate] = useState(todayStr());
   const [market, setMarket] = useState("all");
@@ -114,13 +134,14 @@ export default function Today() {
 
       {market !== "all" && getMarketProjectionUnit(market) && (
         <div className="mb-4 rounded border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          <b className="text-foreground">Proj</b> = {getMarketProjectionUnit(market).label} —{" "}
-          {getMarketProjectionUnit(market).description}{" "}
-          {getMarketProjectionUnit(market).unit === "probability"
-            ? "Values are 0.000–1.000 (multiply by 100 for %)."
-            : "Values are expected counts."}{" "}
-          <b className="text-foreground">Floor</b> / <b className="text-foreground">Ceiling</b> are the same unit (10th/90th-percentile band).{" "}
-          Picks are recommended when our model probability exceeds market implied probability (edge {'>'} 0).
+          <b className="text-foreground">Proj</b> = {getTodayProjectionLabel(market)} —{" "}
+          {getTodayProjectionDescription(market) ?? getMarketProjectionUnit(market).description}{" "}
+          {getTodayProjectionDescription(market)
+            ? "Values are expected counts."
+            : getMarketProjectionUnit(market).unit === "probability"
+              ? "Values are 0.000–1.000 (multiply by 100 for %)."
+              : "Values are expected counts."}{" "}
+          <b className="text-foreground">Floor</b> / <b className="text-foreground">Ceiling</b> still show model probability bands in expanded details. Picks are recommended when our model probability exceeds market implied probability (edge {'>'} 0).
         </div>
       )}
 
@@ -191,7 +212,7 @@ export default function Today() {
                             <TableHead>Player</TableHead>
                             <TableHead>Market</TableHead>
             <TableHead className="text-right">
-                              Proj{market !== "all" && getMarketProjectionUnit(market) ? ` (${getMarketProjectionUnit(market).label})` : ""}
+                              Proj{market !== "all" && getTodayProjectionLabel(market) ? ` (${getTodayProjectionLabel(market)})` : ""}
                              </TableHead>
                              <TableHead>Trigger</TableHead>
                             <TableHead className="text-right">Edge / Rec</TableHead>

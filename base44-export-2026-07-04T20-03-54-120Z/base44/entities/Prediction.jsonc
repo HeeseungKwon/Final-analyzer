@@ -38,6 +38,15 @@
     "projection": {
       "type": "number"
     },
+    "expected_hits": {
+      "type": "number"
+    },
+    "expected_total_bases": {
+      "type": "number"
+    },
+    "expected_hrr": {
+      "type": "number"
+    },
     "floor": {
       "type": "number"
     },

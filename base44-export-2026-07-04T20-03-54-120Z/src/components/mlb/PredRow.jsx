@@ -73,6 +73,25 @@ function formatOddsFallbackReason(reason) {
   return labels[reason] ?? reason;
 }
 
+function getCountProjectionValue(p) {
+  switch (p.market) {
+    case "hit_2":
+      return p.expected_hits;
+    case "total_bases":
+      return p.expected_total_bases;
+    case "hrr_2":
+    case "hrr_3":
+      return p.expected_hrr;
+    default:
+      return p.projection;
+  }
+}
+
+function fmtProjection(p) {
+  return fmt(getCountProjectionValue(p), 2);
+}
+
+
 export default function PredRow({ p, expanded, onToggle }) {
   let features = {};
   try {
@@ -121,7 +140,7 @@ export default function PredRow({ p, expanded, onToggle }) {
           </div>
         </TableCell>
         <TableCell>{getMarketLabel(p.market, "short")}</TableCell>
-        <TableCell className="text-right tabular-nums">{fmt(p.projection, 3)}</TableCell>
+        <TableCell className="text-right tabular-nums">{fmtProjection(p)}</TableCell>
         <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{p.trigger_text}</TableCell>
         <TableCell className="text-right">
           <div className="flex items-center justify-end gap-1">
