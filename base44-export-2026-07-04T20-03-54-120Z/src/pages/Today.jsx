@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { runAnalysis } from "@/lib/analysis-runner";
 import { useToast } from "@/components/ui/use-toast";
 import { MARKETS_FOR_FILTERS, getMarketProjectionUnit } from "@/lib/constants/markets";
@@ -30,6 +31,7 @@ export default function Today() {
   const [market, setMarket] = useState("all");
   const [onlyRec, setOnlyRec] = useState(false);
   const [expanded, setExpanded] = useState({});
+  const [collapsedGames, setCollapsedGames] = useState({});
   const [progress, setProgress] = useState("");
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -137,6 +139,8 @@ export default function Today() {
         <div className="space-y-6">
           {games.map((g) => {
             const rowsForGame = predictions.filter((p) => p.game_pk === g.game_pk);
+            const gameKey = String(g.game_pk ?? g.id);
+            const isGameCollapsed = !!collapsedGames[gameKey];
             if (rowsForGame.length === 0 && market !== "all") return null;
             return (
               <Card key={g.id}>
@@ -147,9 +151,32 @@ export default function Today() {
                       {g.venue_name ?? ""} · {g.game_time_utc ? new Date(g.game_time_utc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
                     </span>
                   </CardTitle>
-                  <Badge variant="secondary">{g.status}</Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary">{g.status}</Badge>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1 px-2 text-xs"
+                      aria-expanded={!isGameCollapsed}
+                      aria-controls={`game-picks-${gameKey}`}
+                      onClick={() => setCollapsedGames((prev) => ({ ...prev, [gameKey]: !prev[gameKey] }))}
+                    >
+                      {isGameCollapsed ? (
+                        <>
+                          <ChevronDown className="h-3 w-3" />
+                          펼치기
+                        </>
+                      ) : (
+                        <>
+                          <ChevronUp className="h-3 w-3" />
+                          접기
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent id={`game-picks-${gameKey}`} className={isGameCollapsed ? "hidden" : undefined}>
                   <div className="mb-3 flex flex-wrap gap-3 text-xs">
                     <span className="rounded bg-muted px-2 py-1"><b>{g.away_team_name}</b> SP: {g.away_probable_pitcher_name || "TBD"}</span>
                     <span className="rounded bg-muted px-2 py-1"><b>{g.home_team_name}</b> SP: {g.home_probable_pitcher_name || "TBD"}</span>
