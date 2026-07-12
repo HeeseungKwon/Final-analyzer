@@ -501,11 +501,18 @@ export function buildParlays(predictions, selectedGamePks) {
   if (selectedGamePks !== undefined && selectedGamePks !== null) {
     const pkSet = selectedGamePks instanceof Set ? selectedGamePks : new Set(selectedGamePks);
     if (pkSet.size === 0) return [];
+    // strictPool: recommended picks with live sportsbook odds (preferred)
     const strictPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing" && p.recommended && !hasFallbackOdds(p));
-    const broaderPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing" && !hasFallbackOdds(p));
+    // broaderPool: all recommended picks regardless of odds source — allows
+    // parlay generation even when no live odds API key is configured.
+    const broaderPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing" && p.recommended);
+    // fallbackPool: any non-missing pick when even broaderPool is too thin
+    const anyPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing");
     const fallbackPool = strictPool.length >= MIN_STRUCTURED_POOL_SIZE
       ? strictPool
-      : broaderPool;
+      : broaderPool.length >= MIN_STRUCTURED_POOL_SIZE
+        ? broaderPool
+        : anyPool;
     if (fallbackPool.length < MIN_STRUCTURED_POOL_SIZE) return [];
 
     const scoredPool = [...fallbackPool]
@@ -574,7 +581,8 @@ export function buildParlays(predictions, selectedGamePks) {
   }
 
   // ── Legacy time-window mode (Review page backward compat) ──────────────
-  const pool = predictions.filter((p) => p.data_quality === "ok" && !hasFallbackOdds(p));
+  // Accept fallback-odds picks so parlays generate even without a live API key.
+  const pool = predictions.filter((p) => p.data_quality === "ok");
   if (pool.length === 0) return [];
 
   const slots = splitPredictionsByTimeWindow(pool);
