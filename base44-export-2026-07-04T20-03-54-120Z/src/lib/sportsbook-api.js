@@ -1,15 +1,29 @@
-// Real-time MLB sportsbook odds via RapidAPI with ESPN fallback.
+// Real-time MLB sportsbook odds.
 //
 // Priority chain:
-//   1. The Odds API via RapidAPI  (when VITE_RAPIDAPI_KEY is configured)
-//   2. JsonOdds via RapidAPI      (when VITE_JSONODDS_RAPIDAPI_KEY or VITE_RAPIDAPI_KEY is configured)
-//   3. ESPN summary / scoreboard API extraction
-//   4. Market-average defaults    (fallbackUsed: true, fallbackReason set)
+//   1. SportsGameOdds         (when VITE_SPORTSGAMEODDS_API_KEY is configured)
+//   2. The Odds API via RapidAPI  (when VITE_RAPIDAPI_KEY is configured)
+//   3. JsonOdds via RapidAPI      (when VITE_JSONODDS_RAPIDAPI_KEY or VITE_RAPIDAPI_KEY is configured)
+//   4. ESPN summary / scoreboard API extraction
+//   5. Market-average defaults    (fallbackUsed: true, fallbackReason set)
+//
+// SportsGameOdds snapshot layer:
+//   - Odds are fetched per-game (event-level), never player-by-player.
+//   - Each game's full response is stored in localStorage under key:
+//       sgo_snapshot:<YYYY-MM-DD>
+//   - The snapshot is reused for the entire day.  A new calendar day
+//     automatically produces a fresh snapshot on the first fetch.
+//   - Pass refreshOdds: true to forcibly bypass the snapshot for today.
 
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb";
 const ODDS_API_RAPIDAPI_HOST = "odds.p.rapidapi.com";
 const JSONODDS_RAPIDAPI_HOST = "jsonjames-jsonodds-v1.p.rapidapi.com";
 const ODDS_API_SPORT = "baseball_mlb";
+
+// SportsGameOdds base URL (see https://sportsgameodds.com/docs/basics/setup)
+const SGO_BASE = "https://api.sportsgameodds.com/v2";
+const SGO_SPORT = "baseball";
+const SGO_LEAGUE = "MLB";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 // Treat lines within ~one tenth of a unit as equivalent.
@@ -26,6 +40,18 @@ const ODDS_API_MARKET_MAP = {
   hrr_3: "batter_hits_runs_rbis",
   home_run: "batter_home_runs",
   strikeouts: "pitcher_strikeouts",
+};
+
+// Maps internal market names → SportsGameOdds stat/prop identifiers.
+// SGO uses "statID" notation; "over" side is extracted from the odds object.
+// See https://sportsgameodds.com/docs/endpoints/events#player-props
+const SGO_MARKET_MAP = {
+  hit_2: { statID: "hits", line: 1.5 },
+  total_bases: { statID: "total_bases", line: 1.5 },
+  hrr_2: { statID: "hits_runs_rbis", line: 1.5 },
+  hrr_3: { statID: "hits_runs_rbis", line: 2.5 },
+  home_run: { statID: "home_runs", line: 0.5 },
+  strikeouts: { statID: "strikeouts", line: 5.5 },
 };
 
 // ESPN market term patterns for fuzzy candidate scoring
@@ -60,13 +86,130 @@ const DEFAULT_MARKET_LINES = {
 // Preferred sportsbooks in priority order
 const PREFERRED_BOOKMAKERS = ["draftkings", "fanduel", "betmgm", "caesars", "pointsbetus", "wynnbet"];
 
-// Caches
+// In-memory caches (session lifetime)
 const payloadCache = new Map();       // ESPN payload cache
-const oddsResultCache = new Map();    // Final odds result cache
+const oddsResultCache = new Map();    // Final odds result cache (per-player-market-game)
 const oddsApiEventCache = new Map();  // RapidAPI events list cache (key: date)
 const oddsApiPropsCache = new Map();  // RapidAPI props cache (key: eventId:market)
+// SGO in-memory event cache (prevents duplicate fetches within one run)
+const sgoEventCache = new Map();      // key: sgoEventId → full event object
 
-// ── Utility functions ────────────────────────────────────────────────────────
+// ── localStorage snapshot helpers ────────────────────────────────────────────
+
+const SNAPSHOT_KEY_PREFIX = "sgo_snapshot:";
+const SNAPSHOT_META_PREFIX = "sgo_snapshot_meta:";
+
+function snapshotKey(dateStr) {
+  return `${SNAPSHOT_KEY_PREFIX}${dateStr}`;
+}
+
+function snapshotMetaKey(dateStr) {
+  return `${SNAPSHOT_META_PREFIX}${dateStr}`;
+}
+
+/**
+ * Load the full daily snapshot from localStorage.
+ * Returns { events: Map<sgoEventId, eventData>, meta: { date, fetchedAt, sportsbooks } }
+ * or null if no snapshot exists.
+ */
+function loadSnapshot(dateStr) {
+  try {
+    const raw = localStorage.getItem(snapshotKey(dateStr));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const metaRaw = localStorage.getItem(snapshotMetaKey(dateStr));
+    const meta = metaRaw ? JSON.parse(metaRaw) : { date: dateStr, fetchedAt: null, sportsbooks: [] };
+    // Hydrate the in-memory event cache from the snapshot
+    for (const [id, data] of Object.entries(parsed.events ?? {})) {
+      sgoEventCache.set(id, data);
+    }
+    return { events: parsed.events ?? {}, meta };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist one event into today's snapshot.
+ * If the snapshot already exists the event is merged in.
+ */
+function saveEventToSnapshot(dateStr, sgoEventId, eventData, sportsbooks) {
+  try {
+    const key = snapshotKey(dateStr);
+    const existing = (() => {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : { events: {} };
+      } catch {
+        return { events: {} };
+      }
+    })();
+    existing.events[sgoEventId] = eventData;
+    localStorage.setItem(key, JSON.stringify(existing));
+
+    // Update metadata
+    const metaKey = snapshotMetaKey(dateStr);
+    const existingMeta = (() => {
+      try {
+        const raw = localStorage.getItem(metaKey);
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    })();
+    const now = new Date().toISOString();
+    const allBooks = Array.from(
+      new Set([...(existingMeta?.sportsbooks ?? []), ...(sportsbooks ?? [])])
+    );
+    localStorage.setItem(
+      metaKey,
+      JSON.stringify({
+        date: dateStr,
+        fetchedAt: existingMeta?.fetchedAt ?? now,
+        lastUpdatedAt: now,
+        sportsbooks: allBooks,
+      })
+    );
+  } catch {
+    // localStorage may be unavailable in some environments — silently skip.
+  }
+}
+
+/**
+ * Replace today's entire snapshot (used by manual refresh).
+ */
+function clearSnapshot(dateStr) {
+  try {
+    localStorage.removeItem(snapshotKey(dateStr));
+    localStorage.removeItem(snapshotMetaKey(dateStr));
+    // Also clear in-memory caches so fresh data is used immediately
+    sgoEventCache.clear();
+    oddsResultCache.clear();
+  } catch {}
+}
+
+/**
+ * Read snapshot metadata for a given date (for the UI).
+ * Returns { date, fetchedAt, lastUpdatedAt, sportsbooks } or null.
+ */
+export function getSnapshotMeta(dateStr) {
+  try {
+    const raw = localStorage.getItem(snapshotMetaKey(dateStr));
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Force a full refresh: clear the snapshot then re-run the analysis.
+ * Callers should pass refreshOdds: true to fetchRealtimeOdds.
+ */
+export function refreshSnapshot(dateStr) {
+  clearSnapshot(dateStr);
+}
+
+// ── Utility functions ─────────────────────────────────────────────────────────
 
 function normalizeText(value) {
   return String(value ?? "")
@@ -128,6 +271,10 @@ function getEnvValue(key) {
   return import.meta.env?.[key] || null;
 }
 
+function getSGOApiKey() {
+  return getEnvValue("VITE_SPORTSGAMEODDS_API_KEY");
+}
+
 function getOddsApiRapidApiKey() {
   return getEnvValue("VITE_ODDS_API_RAPIDAPI_KEY") || getEnvValue("VITE_RAPIDAPI_KEY");
 }
@@ -148,7 +295,270 @@ function getRapidApiHeaders(apiKey, host) {
   };
 }
 
-// ── RapidAPI / The Odds API integration ─────────────────────────────────────
+// ── SportsGameOdds integration ────────────────────────────────────────────────
+
+/**
+ * Fetch today's MLB events list from SportsGameOdds.
+ * Returns the raw array of event objects (each has eventID, teams, etc.).
+ * This is a lightweight listing call — props are fetched per event separately.
+ */
+async function fetchSGOEvents(gameDate) {
+  const apiKey = getSGOApiKey();
+  if (!apiKey) return null;
+
+  const url = `${SGO_BASE}/events?sportID=${SGO_SPORT}&leagueID=${SGO_LEAGUE}&date=${gameDate}`;
+  const response = await fetch(url, {
+    headers: {
+      "x-api-key": apiKey,
+      "Content-Type": "application/json",
+    },
+  });
+  if (!response.ok) throw new Error(`SportsGameOdds events ${response.status}`);
+  const data = await response.json();
+  // SGO returns { data: [...] } or the array directly — normalise
+  return Array.isArray(data) ? data : (data?.data ?? []);
+}
+
+/**
+ * Fetch the full player-props for a specific SGO event.
+ * The complete response is stored in the snapshot so it is reused for all
+ * player lookups within that game — we never fetch the same event twice per day.
+ */
+async function fetchSGOEventProps(sgoEventId, gameDate, forceRefresh = false) {
+  // 1. In-memory cache (within a single analysis run)
+  if (!forceRefresh && sgoEventCache.has(sgoEventId)) {
+    return sgoEventCache.get(sgoEventId);
+  }
+
+  const apiKey = getSGOApiKey();
+  if (!apiKey) return null;
+
+  const url = `${SGO_BASE}/events/${encodeURIComponent(sgoEventId)}?includePlayerProps=true`;
+  const response = await fetch(url, {
+    headers: {
+      "x-api-key": apiKey,
+      "Content-Type": "application/json",
+    },
+  });
+  if (!response.ok) throw new Error(`SportsGameOdds event props ${response.status}`);
+  const data = await response.json();
+  const eventData = data?.data ?? data;
+
+  // 2. Save to in-memory cache
+  sgoEventCache.set(sgoEventId, eventData);
+
+  // 3. Persist to localStorage snapshot
+  const books = extractBookmakerNamesFromSGOEvent(eventData);
+  saveEventToSnapshot(gameDate, sgoEventId, eventData, books);
+
+  return eventData;
+}
+
+/** Extract unique bookmaker names from an SGO event object (for snapshot metadata). */
+function extractBookmakerNamesFromSGOEvent(eventData) {
+  if (!eventData) return [];
+  const books = new Set();
+  // SGO embeds odds under eventData.playerProps[].odds[] or eventData.odds[]
+  // Structure may vary; we walk known paths
+  const propsArr = eventData?.playerProps ?? eventData?.props ?? [];
+  for (const prop of propsArr) {
+    for (const odd of prop?.odds ?? []) {
+      if (odd?.sportsbook) books.add(odd.sportsbook);
+    }
+  }
+  return Array.from(books);
+}
+
+/**
+ * Match the SGO events list to a specific game by team name.
+ */
+function findSGOEvent(events, homeTeamName, awayTeamName) {
+  if (!Array.isArray(events) || events.length === 0) return null;
+  if (!homeTeamName || !awayTeamName) return null;
+
+  const extractNickname = (s) => s.split(" ").filter(Boolean).at(-1) ?? "";
+  const homeNorm = normalizeTeamName(homeTeamName);
+  const awayNorm = normalizeTeamName(awayTeamName);
+  const homeNick = extractNickname(homeNorm);
+  const awayNick = extractNickname(awayNorm);
+
+  return (
+    events.find((e) => {
+      // SGO uses homeTeam / awayTeam or teams.home / teams.away
+      const eHome = normalizeTeamName(e.homeTeam ?? e.teams?.home?.name ?? "");
+      const eAway = normalizeTeamName(e.awayTeam ?? e.teams?.away?.name ?? "");
+      const eHomeNick = extractNickname(eHome);
+      const eAwayNick = extractNickname(eAway);
+      return (
+        (eHomeNick === homeNick || eHome.includes(homeNorm)) &&
+        (eAwayNick === awayNick || eAway.includes(awayNorm))
+      );
+    }) ?? null
+  );
+}
+
+/**
+ * Extract the over-line odds for a specific player + market from an SGO event.
+ *
+ * SGO player props structure (from docs):
+ *   eventData.playerProps = [
+ *     {
+ *       playerID, playerName, statID, line,
+ *       odds: [{ sportsbook, overOdds, underOdds, ... }, ...]
+ *     }, ...
+ *   ]
+ *
+ * We prefer the first sportsbook that matches PREFERRED_BOOKMAKERS order.
+ */
+function extractPlayerPropFromSGO(eventData, market, playerName) {
+  if (!eventData || !playerName) return null;
+
+  const marketConfig = SGO_MARKET_MAP[market];
+  if (!marketConfig) return null;
+
+  const playerNorm = normalizeText(playerName);
+  const playerTerms = playerNorm.split(" ").filter(Boolean);
+  const expectedLine = marketConfig.line;
+
+  // The props array may live at different paths depending on the SGO response shape
+  const propsArr = eventData?.playerProps ?? eventData?.props ?? [];
+  if (!Array.isArray(propsArr) || propsArr.length === 0) return null;
+
+  // Filter props by statID first
+  const statMatches = propsArr.filter((prop) => {
+    const sid = String(prop?.statID ?? "").toLowerCase();
+    return sid === marketConfig.statID || sid.replace(/_/g, "") === marketConfig.statID.replace(/_/g, "");
+  });
+  if (statMatches.length === 0) return null;
+
+  // Among statID matches, find the best player name match
+  const candidatesWithScore = statMatches.map((prop) => {
+    const pNorm = normalizeText(prop?.playerName ?? "");
+    const fullMatch = playerTerms.length > 0 && playerTerms.every((t) => pNorm.includes(t));
+    const partialMatch = playerTerms.some((t) => pNorm.includes(t));
+    const lineMatch =
+      prop.line != null
+        ? Math.abs(Number(prop.line) - expectedLine) <= LINE_MATCH_TOLERANCE
+        : true;
+    const score = (fullMatch ? 6 : partialMatch ? 2 : 0) + (lineMatch ? 2 : 0);
+    return { prop, score };
+  });
+
+  const best = candidatesWithScore
+    .filter((c) => c.score >= 6) // require full name match
+    .sort((a, b) => b.score - a.score)[0];
+  if (!best) return null;
+
+  const prop = best.prop;
+
+  // Pick the preferred sportsbook's over odds
+  const oddsArr = prop?.odds ?? [];
+  for (const bookKey of PREFERRED_BOOKMAKERS) {
+    const bookOdds = oddsArr.find(
+      (o) => String(o?.sportsbook ?? "").toLowerCase().replace(/\s+/g, "") === bookKey
+    );
+    if (!bookOdds) continue;
+    // SGO may use overOdds / over / price / americanOver
+    const rawOdds =
+      bookOdds.overOdds ?? bookOdds.over ?? bookOdds.price ?? bookOdds.americanOver ?? null;
+    const odds = parseAmericanOdds(rawOdds);
+    if (odds == null) continue;
+    const impliedProbability = convertAmericanToImplied(odds);
+    if (!Number.isFinite(impliedProbability)) continue;
+
+    return {
+      marketOdds: odds,
+      impliedProbability,
+      marketLine: parseLineValue(prop.line) ?? expectedLine,
+      source: "sgo",
+      provider: bookOdds.sportsbook ?? bookKey,
+      fallbackUsed: false,
+      fallbackReason: null,
+      eventId: eventData?.eventID ?? eventData?.id ?? null,
+    };
+  }
+
+  // No preferred book found — use any available book
+  for (const bookOdds of oddsArr) {
+    const rawOdds =
+      bookOdds.overOdds ?? bookOdds.over ?? bookOdds.price ?? bookOdds.americanOver ?? null;
+    const odds = parseAmericanOdds(rawOdds);
+    if (odds == null) continue;
+    const impliedProbability = convertAmericanToImplied(odds);
+    if (!Number.isFinite(impliedProbability)) continue;
+
+    return {
+      marketOdds: odds,
+      impliedProbability,
+      marketLine: parseLineValue(prop.line) ?? expectedLine,
+      source: "sgo",
+      provider: bookOdds.sportsbook ?? "unknown",
+      fallbackUsed: false,
+      fallbackReason: null,
+      eventId: eventData?.eventID ?? eventData?.id ?? null,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Main SportsGameOdds lookup.
+ *
+ * Flow:
+ *   1. Check localStorage snapshot for today's date.
+ *   2. If the event is already in the snapshot (and not forceRefresh), use it.
+ *   3. Otherwise: fetch events list → find matching event → fetch full props → save snapshot.
+ *   4. Extract the player prop from the (now-cached) event data.
+ */
+async function trySGOOdds(market, playerName, gameContext, forceRefresh = false) {
+  const apiKey = getSGOApiKey();
+  if (!apiKey) return null;
+
+  const { gameDate, homeTeamName, awayTeamName } = gameContext ?? {};
+  if (!gameDate || !homeTeamName || !awayTeamName) return null;
+
+  // Try to serve from snapshot first
+  if (!forceRefresh) {
+    const snapshot = loadSnapshot(gameDate);
+    if (snapshot) {
+      // Look for this game's event in the snapshot
+      const snapshotEventData = Object.values(snapshot.events).find((eventData) => {
+        const eHome = normalizeTeamName(eventData?.homeTeam ?? eventData?.teams?.home?.name ?? "");
+        const eAway = normalizeTeamName(eventData?.awayTeam ?? eventData?.teams?.away?.name ?? "");
+        const homeNorm = normalizeTeamName(homeTeamName);
+        const awayNorm = normalizeTeamName(awayTeamName);
+        return (
+          (eHome.includes(homeNorm) || normalizeTeamName(homeTeamName).includes(eHome)) &&
+          (eAway.includes(awayNorm) || normalizeTeamName(awayTeamName).includes(eAway))
+        );
+      });
+      if (snapshotEventData) {
+        // Also update in-memory cache
+        const eid = snapshotEventData?.eventID ?? snapshotEventData?.id;
+        if (eid) sgoEventCache.set(eid, snapshotEventData);
+        return extractPlayerPropFromSGO(snapshotEventData, market, playerName);
+      }
+    }
+  }
+
+  // Snapshot miss (or forceRefresh) → fetch from API
+  const events = await fetchSGOEvents(gameDate);
+  if (!Array.isArray(events) || events.length === 0) return null;
+
+  const matchedEvent = findSGOEvent(events, homeTeamName, awayTeamName);
+  if (!matchedEvent) return null;
+
+  const sgoEventId = matchedEvent.eventID ?? matchedEvent.id;
+  if (!sgoEventId) return null;
+
+  const eventData = await fetchSGOEventProps(sgoEventId, gameDate, forceRefresh);
+  if (!eventData) return null;
+
+  return extractPlayerPropFromSGO(eventData, market, playerName);
+}
+
+// ── RapidAPI / The Odds API integration ──────────────────────────────────────
 
 async function fetchOddsApiEvents(gameDate) {
   const cached = oddsApiEventCache.get(gameDate);
@@ -185,8 +595,6 @@ function findOddsApiEvent(events, homeTeamName, awayTeamName) {
       const eAwayNorm = normalizeTeamName(e.away_team ?? "");
       const eHomeNick = extractTeamNickname(eHomeNorm);
       const eAwayNick = extractTeamNickname(eAwayNorm);
-      // Prefer exact nickname match; fall back to the API name containing
-      // the input name (unidirectional to avoid false positives).
       return (
         (eHomeNick === homeNick || eHomeNorm.includes(homeNorm)) &&
         (eAwayNick === awayNick || eAwayNorm.includes(awayNorm))
@@ -239,9 +647,6 @@ function extractPlayerPropFromOddsApi(propsData, market, playerName) {
       const descNorm = normalizeText(o.description ?? "");
       const nameMatch = playerTerms.length > 0 && playerTerms.every((t) => descNorm.includes(t));
       if (!nameMatch) return false;
-      // When both expected line and API line are present they must match within
-      // tolerance.  If only one side is missing, accept the outcome — the
-      // player+market match is already a strong signal.
       if (expectedLine != null && o.point != null) {
         return Math.abs(o.point - expectedLine) <= LINE_MATCH_TOLERANCE;
       }
@@ -302,7 +707,7 @@ async function verifyJsonOddsRapidApiAccess() {
   return data;
 }
 
-// ── ESPN extraction ──────────────────────────────────────────────────────────
+// ── ESPN extraction ───────────────────────────────────────────────────────────
 
 async function fetchJson(url) {
   const response = await fetch(url, { headers: { Accept: "application/json" } });
@@ -422,18 +827,45 @@ async function tryEspnOdds(gamePk, market, playerName) {
   };
 }
 
-// ── Main export ──────────────────────────────────────────────────────────────
+// ── Main export ───────────────────────────────────────────────────────────────
 
-export async function fetchRealtimeOdds(gamePk, market, playerName, gameContext) {
+/**
+ * Fetch real-time odds for a player/market/game.
+ *
+ * @param {number|string} gamePk  MLB Stats API game PK
+ * @param {string} market         Internal market key (hit_2, home_run, etc.)
+ * @param {string} playerName     Full player name
+ * @param {object} gameContext    { gameDate, homeTeamName, awayTeamName }
+ * @param {object} [opts]         { refreshOdds: boolean } — when true, bypass snapshot
+ */
+export async function fetchRealtimeOdds(gamePk, market, playerName, gameContext, opts = {}) {
+  const refreshOdds = Boolean(opts?.refreshOdds);
   const cacheKey = `${gamePk}:${market}:${normalizeText(playerName)}`;
-  const cached = oddsResultCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  // In-memory per-run result cache (reset when refreshOdds clears sgoEventCache)
+  if (!refreshOdds) {
+    const cached = oddsResultCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+  }
 
   if (!gamePk || !market) {
     return buildFallbackOdds(market, "missing-params");
   }
 
-  // 1. Try RapidAPI / The Odds API (requires VITE_RAPIDAPI_KEY + gameContext)
+  // 1. SportsGameOdds (snapshot-backed, event-level fetch)
+  if (getSGOApiKey()) {
+    try {
+      const sgoResult = await trySGOOdds(market, playerName, gameContext, refreshOdds);
+      if (sgoResult) {
+        oddsResultCache.set(cacheKey, { value: sgoResult, expiresAt: Date.now() + CACHE_TTL_MS });
+        return sgoResult;
+      }
+    } catch {
+      // Fall through to next provider.
+    }
+  }
+
+  // 2. Try RapidAPI / The Odds API (requires VITE_RAPIDAPI_KEY + gameContext)
   try {
     const rapidResult = await tryRapidApiOdds(market, playerName, gameContext);
     if (rapidResult) {
@@ -453,17 +885,14 @@ export async function fetchRealtimeOdds(gamePk, market, playerName, gameContext)
     // Fall through to ESPN.
   }
 
-  // 2. If the user configured the JsonOdds RapidAPI app, verify the key/host pair
-  // before falling through. JsonOdds does not expose MLB player props, so it cannot
-  // directly price these player markets; this turns an auth problem into a normal
-  // no-match fallback instead of incorrectly reporting a missing-key fallback.
+  // 3. If the user configured the JsonOdds RapidAPI app, verify the key/host pair
   try {
     await verifyJsonOddsRapidApiAccess();
   } catch {
     // Fall through to ESPN.
   }
 
-  // 3. Try ESPN extraction
+  // 4. Try ESPN extraction
   if (playerName) {
     try {
       const espnResult = await tryEspnOdds(gamePk, market, playerName);
@@ -477,7 +906,9 @@ export async function fetchRealtimeOdds(gamePk, market, playerName, gameContext)
     }
   }
 
-  // 4. Market-average defaults — mark as fallback so parlays can exclude them
-  const fallbackReason = !hasAnyRapidApiKey() ? FALLBACK_REASON_RAPIDAPI_NOT_CONFIGURED : "no-match";
+  // 5. Market-average defaults — mark as fallback so parlays can exclude them
+  const fallbackReason = !hasAnyRapidApiKey() && !getSGOApiKey()
+    ? FALLBACK_REASON_RAPIDAPI_NOT_CONFIGURED
+    : "no-match";
   return buildFallbackOdds(market, fallbackReason);
 }

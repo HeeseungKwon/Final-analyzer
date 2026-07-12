@@ -1,6 +1,6 @@
 const db = globalThis.__B44_DB__ || { auth:{ isAuthenticated: async()=>false, me: async()=>null }, entities:new Proxy({}, { get:()=>({ filter:async()=>[], get:async()=>null, create:async()=>({}), update:async()=>({}), delete:async()=>({}) }) }), integrations:{ Core:{ UploadFile:async()=>({ file_url:'' }) } } };
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import AppShell from "@/components/mlb/AppShell";
@@ -10,9 +10,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, RefreshCw, Database } from "lucide-react";
 import { runAnalysis } from "@/lib/analysis-runner";
+import { getSnapshotMeta, refreshSnapshot } from "@/lib/sportsbook-api";
 import { useToast } from "@/components/ui/use-toast";
 import { MARKETS_FOR_FILTERS, getMarketProjectionUnit } from "@/lib/constants/markets";
 
@@ -53,8 +56,15 @@ export default function Today() {
   const [expanded, setExpanded] = useState({});
   const [collapsedGames, setCollapsedGames] = useState({});
   const [progress, setProgress] = useState("");
+  const [refreshOdds, setRefreshOdds] = useState(false);
+  const [snapshotMeta, setSnapshotMeta] = useState(null);
   const { toast } = useToast();
   const qc = useQueryClient();
+
+  // Load snapshot metadata whenever the date changes or after a refresh
+  useEffect(() => {
+    setSnapshotMeta(getSnapshotMeta(date));
+  }, [date]);
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ["predictions", date],
@@ -68,10 +78,14 @@ export default function Today() {
   });
 
   const run = useMutation({
-    mutationFn: () => runAnalysis(date, setProgress),
+    mutationFn: () => runAnalysis(date, setProgress, { refreshOdds }),
     onSuccess: (r) => {
       toast({ title: "Analysis complete", description: r.message });
       setProgress("");
+      // Reload snapshot metadata after run (it may have been populated/refreshed)
+      setSnapshotMeta(getSnapshotMeta(date));
+      // Reset the refresh toggle back to OFF after a manual refresh run
+      if (refreshOdds) setRefreshOdds(false);
       qc.invalidateQueries({ queryKey: ["predictions", date] });
     },
     onError: (e) => {
@@ -79,6 +93,13 @@ export default function Today() {
       setProgress("");
     },
   });
+
+  function handleRefreshOddsNow() {
+    refreshSnapshot(date);
+    setSnapshotMeta(null);
+    setRefreshOdds(true);
+    toast({ title: "Snapshot cleared", description: "Fresh sportsbook odds will be downloaded on the next analysis run." });
+  }
 
   const games = data?.games ?? [];
   const finalGamePks = new Set(
@@ -109,6 +130,72 @@ export default function Today() {
           </Button>
         </div>
       </div>
+
+      {/* ── Sportsbook Snapshot Section ─────────────────────────────────── */}
+      <Card className="mb-6">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+            <Database className="h-4 w-4 text-muted-foreground" />
+            Sportsbook Odds Snapshot
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            {/* Snapshot info */}
+            <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm">
+              <span className="text-muted-foreground">Snapshot date</span>
+              <span className="font-medium">{snapshotMeta?.date ?? "—"}</span>
+              <span className="text-muted-foreground">First fetched</span>
+              <span className="font-medium">
+                {snapshotMeta?.fetchedAt
+                  ? new Date(snapshotMeta.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                  : "—"}
+              </span>
+              <span className="text-muted-foreground">Last updated</span>
+              <span className="font-medium">
+                {snapshotMeta?.lastUpdatedAt
+                  ? new Date(snapshotMeta.lastUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                  : "—"}
+              </span>
+              <span className="text-muted-foreground">Sportsbooks</span>
+              <span className="font-medium">
+                {snapshotMeta?.sportsbooks?.length
+                  ? snapshotMeta.sportsbooks.join(", ")
+                  : "—"}
+              </span>
+            </div>
+
+            {/* Refresh controls */}
+            <div className="flex flex-col items-end gap-3">
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="refresh-odds-toggle"
+                  checked={refreshOdds}
+                  onCheckedChange={setRefreshOdds}
+                />
+                <Label htmlFor="refresh-odds-toggle" className="text-sm cursor-pointer">
+                  Refresh odds on next run
+                </Label>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={handleRefreshOddsNow}
+                disabled={run.isPending}
+              >
+                <RefreshCw className="h-3 w-3" />
+                Refresh Today's Sportsbook Odds
+              </Button>
+              <p className="text-xs text-muted-foreground text-right max-w-xs">
+                {snapshotMeta
+                  ? "Using cached snapshot. Toggle on or click refresh to download fresh odds."
+                  : "No snapshot for this date. Odds will be fetched when you run analysis."}
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {run.isPending && progress && (
         <div className="mb-4 rounded border bg-muted/40 px-3 py-2 text-xs text-muted-foreground animate-pulse">
