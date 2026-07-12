@@ -117,10 +117,16 @@ function buildEdgeFeatures(baseFeatures, edgeMetrics, oddsInfo) {
   };
 }
 
-export async function runAnalysis(dateArg, onProgress) {
+/**
+ * @param {string} [dateArg]       Analysis date (YYYY-MM-DD, defaults to today)
+ * @param {Function} [onProgress]  Progress callback
+ * @param {object} [opts]          { refreshOdds: boolean } — pass true to bypass the sportsbook snapshot
+ */
+export async function runAnalysis(dateArg, onProgress, opts = {}) {
   const date = dateArg || todayIsoDate();
   const season = currentMlbSeason(new Date(date));
   const log = (msg) => onProgress?.(msg);
+  const refreshOdds = Boolean(opts?.refreshOdds);
 
   log("Fetching schedule...");
   const games = await fetchSchedule(date);
@@ -303,7 +309,7 @@ export async function runAnalysis(dateArg, onProgress) {
               gameDate: g.game_date,
               homeTeamName: g.home_team_name,
               awayTeamName: g.away_team_name,
-            });
+            }, { refreshOdds });
             const edgeMetrics = edgeBasedScoring({
               market: s.market,
               projection: s.projection,
@@ -418,7 +424,7 @@ export async function runAnalysis(dateArg, onProgress) {
             gameDate: g.game_date,
             homeTeamName: g.home_team_name,
             awayTeamName: g.away_team_name,
-          });
+          }, { refreshOdds });
           const edgeMetrics = edgeBasedScoring({
             market: s.market,
             projection: s.projection,
