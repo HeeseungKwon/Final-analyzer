@@ -177,7 +177,7 @@ export default function PredRow({ p, expanded, onToggle }) {
                 <div>
                   <div className="text-muted-foreground">Edge</div>
                   <div className="font-semibold tabular-nums">
-                    {edge == null ? "—" : `${Number(edge) > 0 ? "+" : ""}${fmt(Number(edge) * 100, 1)} pts`}
+                    {oddsFallback ? "N/A" : edge == null ? "—" : `${Number(edge) > 0 ? "+" : ""}${fmt(Number(edge) * 100, 1)} pts`}
                   </div>
                 </div>
                 <div>
@@ -217,16 +217,16 @@ export default function PredRow({ p, expanded, onToggle }) {
                     </div>
                     <div>
                       <div className="text-muted-foreground">EV (1u stake)</div>
-                      <div className="font-semibold tabular-nums">{fmt(expectedValue, 3)}</div>
+                      <div className="font-semibold tabular-nums">{oddsFallback ? "N/A" : fmt(expectedValue, 3)}</div>
                     </div>
                     <div>
                       <div className="text-muted-foreground">ROI</div>
-                      <div className="font-semibold tabular-nums">{Number.isFinite(Number(roi)) ? `${Number(roi).toFixed(1)}%` : "—"}</div>
+                      <div className="font-semibold tabular-nums">{oddsFallback ? "N/A" : Number.isFinite(Number(roi)) ? `${Number(roi).toFixed(1)}%` : "—"}</div>
                     </div>
                     <div>
                       <div className="text-muted-foreground">Kelly / Stake</div>
                       <div className="font-semibold tabular-nums">
-                        {fmtPct(kellyFraction)} / {fmtPct(recommendedStake)}
+                        {oddsFallback ? "N/A" : `${fmtPct(kellyFraction)} / ${fmtPct(recommendedStake)}`}
                       </div>
                     </div>
                   </div>
