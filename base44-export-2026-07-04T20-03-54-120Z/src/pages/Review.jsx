@@ -263,7 +263,7 @@ export default function Review() {
         game_time_utc: gameTimeByPk.get(p.game_pk) ?? null,
       }));
 
-      const gradedPicks = predictionsWithGameTime.filter((p) => p.graded === true);
+      const gradedPicks = predictionsWithGameTime.filter((p) => p.graded === true && Number(p.projection ?? 0) >= 0.60);
       const { marketSummary, buckets } = buildAccuracyFromPicks(gradedPicks);
 
       return { marketSummary, buckets, gradedPicks };
