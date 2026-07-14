@@ -11,7 +11,7 @@ import { getMarketLabel } from "@/lib/constants/markets";
  * 
  * Features:
  * - Sorted by player name (ascending) for easy scanning
- * - Shows confidence level and outcome badge
+ * - Shows model probability and outcome badge
  * - Allows historical accuracy analysis
  */
 export default function PicksReviewTable({ picks }) {
@@ -34,7 +34,7 @@ export default function PicksReviewTable({ picks }) {
           <TableHead>Date</TableHead>
           <TableHead>Player</TableHead>
           <TableHead>Market</TableHead>
-          <TableHead className="text-right">Confidence</TableHead>
+          <TableHead className="text-right">Model %</TableHead>
           <TableHead className="text-right">Result</TableHead>
         </TableRow>
       </TableHeader>
@@ -44,7 +44,7 @@ export default function PicksReviewTable({ picks }) {
             <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{p.game_date}</TableCell>
             <TableCell className="font-medium">{p.player_name}</TableCell>
             <TableCell>{getMarketLabel(p.market, "full")}</TableCell>
-            <TableCell className="text-right tabular-nums">{p.confidence != null ? Math.round(p.confidence) : "—"}</TableCell>
+            <TableCell className="text-right tabular-nums">{p.projection != null ? `${(Number(p.projection) * 100).toFixed(1)}%` : "—"}</TableCell>
             <TableCell className="text-right">
               {p.hit ? (
                 <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100">Correct</Badge>
