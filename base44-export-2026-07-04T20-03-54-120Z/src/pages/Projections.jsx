@@ -193,7 +193,7 @@ export default function Projections() {
     queryKey: ["projections", date],
     queryFn: async () => {
       const predictions = await db.entities.Prediction.filter({ game_date: date });
-      const withScores = predictions.filter(p => p.projection_score != null && p.expected_hits != null);
+      const withScores = predictions.filter(p => p.projection_score != null && p.expected_hits != null && Number(p.projection ?? 0) >= 0.60);
       return { predictions: withScores };
     },
   });
