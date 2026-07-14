@@ -113,7 +113,7 @@ function MarketRankingTable({ market, rankings }) {
   }, [rankings, sortCol, sortDir, market]);
 
   return (
-    <Card className="mb-6">
+    <Card id={`market-${market}`} className="mb-6">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg">{marketDisplay(market)}</CardTitle>
@@ -239,8 +239,20 @@ export default function Projections() {
           {summaries.length > 0 && (
             <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {summaries.map((summary) => (
-                <Card key={summary.market}>
-                  <CardContent className="pt-6">
+                <Card
+                   key={summary.market}
+                   role="button"
+                   tabIndex={0}
+                   className="cursor-pointer transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary"
+                   onClick={() => document.getElementById(`market-${summary.market}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                   onKeyDown={(e) => {
+                     if (e.key === "Enter" || e.key === " ") {
+                       e.preventDefault();
+                       document.getElementById(`market-${summary.market}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                     }
+                   }}
+                 >
+                   <CardContent className="pt-6">
                     <div className="space-y-2">
                       <h3 className="text-sm font-semibold">{marketDisplay(summary.market)}</h3>
                       <div>
