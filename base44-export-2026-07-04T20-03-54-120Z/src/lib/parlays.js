@@ -186,6 +186,7 @@ function toLeg(p, reason) {
     expected: expectedValueForPrediction(p),
     modelProb: probabilityProjection(p, features),
     edge: p.market_edge ?? p._edge,
+    oddsFallback: features?.oddsFallback === true,
     tier: p._tier ?? null,
     reason,
   };
@@ -210,15 +211,17 @@ function assembleParlay(name, strategy, legs, minLegs = 4) {
   const be = breakEvenProbForLegs(legs.length);
   const avgConfidence = legs.reduce((sum, l) => sum + Number(l.confidence ?? 0), 0) / Math.max(1, legs.length);
   const implied = legs.reduce((acc, leg) => acc * clamp(Number(leg.impliedProb ?? 0.545), 0.05, 0.95), 1);
-  const avgEdge = combined - implied;
+  const hasLiveOdds = legs.every((leg) => leg.oddsFallback !== true);
+  const avgEdge = hasLiveOdds ? combined - implied : null;
   return {
     name,
     strategy,
     legs,
     combinedProb: combined,
     breakEvenProb: be,
-    edge: combined - be,
-    ev: combined * Math.pow(1.8333333333, legs.length) - 1,
+    edge: hasLiveOdds ? combined - be : null,
+    ev: hasLiveOdds ? combined * Math.pow(1.8333333333, legs.length) - 1 : null,
+    hasLiveOdds,
     avgConfidence,
     avgEdge,
     fairAmericanOdds: probToAmerican(combined),
@@ -525,12 +528,12 @@ export function buildParlays(predictions, selectedGamePks) {
     const pkSet = selectedGamePks instanceof Set ? selectedGamePks : new Set(selectedGamePks);
     if (pkSet.size === 0) return [];
     // strictPool: recommended picks with live sportsbook odds (preferred)
-    const strictPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing" && p.recommended && !hasFallbackOdds(p));
+    const strictPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing" && p.recommended && Number(p.projection ?? 0) >= 0.60 && !hasFallbackOdds(p));
     // broaderPool: all recommended picks regardless of odds source — allows
     // parlay generation even when no live odds API key is configured.
-    const broaderPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing" && p.recommended);
+    const broaderPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing" && p.recommended && Number(p.projection ?? 0) >= 0.60);
     // fallbackPool: any non-missing pick when even broaderPool is too thin
-    const anyPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing");
+    const anyPool = predictions.filter((p) => pkSet.has(p.game_pk) && p.data_quality !== "missing" && Number(p.projection ?? 0) >= 0.60);
     const fallbackPool = strictPool.length >= MIN_STRUCTURED_POOL_SIZE
       ? strictPool
       : broaderPool.length >= MIN_STRUCTURED_POOL_SIZE
@@ -605,7 +608,7 @@ export function buildParlays(predictions, selectedGamePks) {
 
   // ── Legacy time-window mode (Review page backward compat) ──────────────
   // Accept fallback-odds picks so parlays generate even without a live API key.
-  const pool = predictions.filter((p) => p.data_quality === "ok");
+  const pool = predictions.filter((p) => p.data_quality === "ok" && Number(p.projection ?? 0) >= 0.60);
   if (pool.length === 0) return [];
 
   const slots = splitPredictionsByTimeWindow(pool);
@@ -810,11 +813,11 @@ export function buildHRParlays(predictions, selectedGamePks) {
 
     // Primary pool: "ok" quality HR picks. Fallback to "partial" quality when empty.
     let hrPool = predictions.filter(
-      (p) => pkSet.has(p.game_pk) && p.market === "home_run" && p.data_quality === "ok"
+      (p) => pkSet.has(p.game_pk) && p.market === "home_run" && p.data_quality === "ok" && Number(p.projection ?? 0) >= 0.60
     );
     if (hrPool.length === 0) {
       hrPool = predictions.filter(
-        (p) => pkSet.has(p.game_pk) && p.market === "home_run" && p.data_quality !== "missing"
+        (p) => pkSet.has(p.game_pk) && p.market === "home_run" && p.data_quality !== "missing" && Number(p.projection ?? 0) >= 0.60
       );
     }
     if (hrPool.length === 0) return [];
@@ -860,7 +863,7 @@ export function buildHRParlays(predictions, selectedGamePks) {
   }
 
   // ── Legacy time-window mode ─────────────────────────────────────────────
-  const pool = predictions.filter((p) => p.market === "home_run" && p.data_quality === "ok");
+  const pool = predictions.filter((p) => p.market === "home_run" && p.data_quality === "ok" && Number(p.projection ?? 0) >= 0.60);
   if (pool.length === 0) return [];
 
   // Filter for STRONG and MIDDLING verdicts
