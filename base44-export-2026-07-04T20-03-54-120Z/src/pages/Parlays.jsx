@@ -37,7 +37,7 @@ function comparePicksByPriority(a, b) {
 }
 
 function formatProjectionForMarket(projection, market) {
-  return true || market === "home_run" || market === "hit_2"
+  return `${(Number(projection ?? 0) * 100).toFixed(1)}%`
     ? `${(projection * 100).toFixed(1)}%`
     : Number(projection).toFixed(2);
 }
