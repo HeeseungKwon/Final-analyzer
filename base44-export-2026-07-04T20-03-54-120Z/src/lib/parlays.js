@@ -326,14 +326,31 @@ function expectedValueForPrediction(p) {
 }
 
 function analyzerPickQuality(p) {
-  const modelScore = clamp(Number(probabilityProjection(p, parseFeatures(p.features)) ?? 0) * 100, 0, 100);
+  const features = parseFeatures(p.features);
+  const modelScore = clamp(Number(probabilityProjection(p, features) ?? 0) * 100, 0, 100);
   const projectionScore = clamp(Number(p.projection_score ?? p.rec_score ?? 0), 0, 100);
   const confidenceScore = clamp(Number(p.confidence_score ?? p.confidence ?? 0), 0, 100);
   const edgeScore = clamp(50 + Number(p.market_edge ?? p._edge ?? 0) * 500, 0, 100);
   const expected = expectedValueForPrediction(p);
   const expectedScale = p.market === "home_run" ? 0.35 : p.market === "total_bases" ? 2.5 : p.market === "strikeouts" ? 9 : p.market.startsWith("hrr_") ? 2.5 : 2;
   const expectedScore = clamp((expected / expectedScale) * 100, 0, 100);
-  return projectionScore * 0.35 + modelScore * 0.25 + confidenceScore * 0.20 + edgeScore * 0.15 + expectedScore * 0.05;
+
+  // Edge is only meaningful when a real sportsbook price is available.
+  const hasRealOdds = !hasFallbackOdds(p) &&
+    Number.isFinite(Number(features.marketOdds)) &&
+    Number.isFinite(Number(p.market_edge ?? features.edge));
+  if (hasRealOdds) {
+    return projectionScore * 0.30 + modelScore * 0.33 + confidenceScore * 0.22 + edgeScore * 0.10 + expectedScore * 0.05;
+  }
+  return projectionScore * 0.35 + modelScore * 0.38 + confidenceScore * 0.22 + expectedScore * 0.05;
+}
+
+function gameAllowsMultipleTeamPlayers(p) {
+  const features = parseFeatures(p.features);
+  const teamRuns = Number(features.teamImpliedTotal ?? 0);
+  const opponentRuns = Number(features.opponentTeamImpliedTotal ?? 0);
+  const runDifferential = Math.abs(Number(features.expectedRunDifferential ?? teamRuns - opponentRuns));
+  return teamRuns >= 5.0 || runDifferential >= 1.0;
 }
 
 function sortStructuredPicksByRank(a, b) {
@@ -379,6 +396,9 @@ function buildStructuredParlayCandidates({
 
   const candidates = [];
   const maxPerGame = adaptiveMaxPerGame(selectedGameCount, size);
+  const multiplePlayerGames = new Set(
+    pool.filter((pick) => gameAllowsMultipleTeamPlayers(pick)).map((pick) => pick.game_pk)
+  );
 
   const search = (start, chosen, byGame, byPlayer, homeRunLegs) => {
     // Stop once enough viable cards have been found; this bounded search keeps
@@ -405,7 +425,8 @@ function buildStructuredParlayCandidates({
     for (let i = start; i < pool.length; i++) {
       const pick = pool[i];
       const isHr = pick.market === "home_run";
-      if ((byGame.get(pick.game_pk) ?? 0) >= maxPerGame) continue;
+      const gameLimit = multiplePlayerGames.has(pick.game_pk) ? Math.max(2, maxPerGame) : maxPerGame;
+      if ((byGame.get(pick.game_pk) ?? 0) >= gameLimit) continue;
       if ((byPlayer.get(pick.player_id) ?? 0) >= 1) continue;
       if (pick._edge < MIN_PICK_EDGE) continue;
 
