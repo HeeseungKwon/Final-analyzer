@@ -106,6 +106,7 @@ export default function Today() {
     games.filter((g) => isFinalGameStatus(g.status)).map((g) => g.game_pk)
   );
   const predictions = (data?.predictions ?? []).filter((p) => {
+    if (Number(p.projection ?? 0) < 0.60) return false;
     // Exclude recommendations from games that are already final.
     if (p.recommended && finalGamePks.has(p.game_pk)) return false;
     if (market !== "all" && p.market !== market) return false;
