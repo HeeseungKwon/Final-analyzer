@@ -41,7 +41,7 @@ function formatProjectionForMarket(projection) {
 }
 
 function ParlayCard({ parlay, selectable, selected, onToggle, onDelete }) {
-  const good = parlay.edge > 0;
+  const good = parlay.hasLiveOdds && parlay.edge > 0;
   return (
     <Card className={selected ? "border-primary bg-primary/5" : ""}>
       <CardHeader className="flex-row items-start justify-between space-y-0 pb-3">
@@ -76,12 +76,12 @@ function ParlayCard({ parlay, selectable, selected, onToggle, onDelete }) {
         <div className="mb-3 flex flex-wrap gap-4 text-xs">
           <span><b>Legs:</b> {parlay.legs.length}</span>
           <span><b>Break-even @ -120 legs:</b> {(parlay.breakEvenProb * 100).toFixed(1)}%</span>
-          {Number.isFinite(parlay.ev) && <span><b>EV:</b> {(parlay.ev * 100).toFixed(1)}%</span>}
+          <span><b>EV:</b> {parlay.hasLiveOdds && Number.isFinite(parlay.ev) ? `${(parlay.ev * 100).toFixed(1)}%` : "N/A"}</span>
           {Number.isFinite(parlay.correlation) && <span><b>Correlation:</b> {(parlay.correlation * 100).toFixed(1)}%</span>}
           <span>
             <b>Edge:</b>{" "}
             <span className={good ? "text-emerald-600 dark:text-emerald-400 font-semibold" : "text-destructive"}>
-              {good ? "+" : ""}{(parlay.edge * 100).toFixed(1)} pts
+              {parlay.hasLiveOdds && Number.isFinite(parlay.edge) ? `${good ? "+" : ""}${(parlay.edge * 100).toFixed(1)} pts` : "N/A"}
             </span>
           </span>
           {good && <Badge className="bg-emerald-600 hover:bg-emerald-600">POSITIVE EDGE</Badge>}
