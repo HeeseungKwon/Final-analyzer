@@ -36,10 +36,8 @@ function comparePicksByPriority(a, b) {
   );
 }
 
-function formatProjectionForMarket(projection, market) {
-  return `${(Number(projection ?? 0) * 100).toFixed(1)}%`
-    ? `${(projection * 100).toFixed(1)}%`
-    : Number(projection).toFixed(2);
+function formatProjectionForMarket(projection) {
+  return `${(Number(projection ?? 0) * 100).toFixed(1)}%`;
 }
 
 function ParlayCard({ parlay, selectable, selected, onToggle, onDelete }) {
