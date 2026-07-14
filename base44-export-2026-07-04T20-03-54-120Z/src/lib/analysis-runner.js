@@ -292,6 +292,8 @@ export async function runAnalysis(dateArg, onProgress, opts = {}) {
             parkFactor: parkFactorFor(g.home_team_id),
             // Team's season R/G used as proxy for run-scoring environment
             teamImpliedTotal: teamStats?.runsPerGame ?? 4.5,
+            opponentTeamImpliedTotal: opponentTeamStats?.runsPerGame ?? 4.5,
+            expectedRunDifferential: (teamStats?.runsPerGame ?? 4.5) - (opponentTeamStats?.runsPerGame ?? 4.5),
             // Team OBP used as proxy for runners-on-base context ahead/behind
             onbaseRateAhead: teamStats?.obp ?? 0.320,
             onbaseRateBehind: teamStats?.obp ?? 0.320,
