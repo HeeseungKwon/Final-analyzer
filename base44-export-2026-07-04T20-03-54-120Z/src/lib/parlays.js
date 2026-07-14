@@ -181,7 +181,11 @@ function toLeg(p, reason) {
     legProb: legProbabilityFor(p),
     impliedProb: impliedProbForPrediction(p),
     projection: p.projection,
-    confidence: p.confidence,
+    confidence: p.confidence_score ?? p.confidence,
+    projectionScore: p.projection_score,
+    expected: expectedValueForPrediction(p),
+    modelProb: probabilityProjection(p, features),
+    edge: p.market_edge ?? p._edge,
     tier: p._tier ?? null,
     reason,
   };
@@ -309,13 +313,32 @@ function dedupeAndRankParlays(candidates, limit = 8) {
   return out;
 }
 
+function expectedValueForPrediction(p) {
+  const features = parseFeatures(p.features);
+  if (p.market === "home_run") return Number(p.expected_home_runs ?? 0);
+  if (["hrr_2", "hrr_3"].includes(p.market)) return Number(p.expected_hrr ?? 0);
+  if (p.market === "total_bases") return Number(p.expected_total_bases ?? 0);
+  if (p.market === "strikeouts") return Number(p.expected_strikeouts ?? features?.expectedStrikeouts ?? 0);
+  return Number(p.expected_hits ?? 0);
+}
+
+function analyzerPickQuality(p) {
+  const modelScore = clamp(Number(probabilityProjection(p, parseFeatures(p.features)) ?? 0) * 100, 0, 100);
+  const projectionScore = clamp(Number(p.projection_score ?? p.rec_score ?? 0), 0, 100);
+  const confidenceScore = clamp(Number(p.confidence_score ?? p.confidence ?? 0), 0, 100);
+  const edgeScore = clamp(50 + Number(p.market_edge ?? p._edge ?? 0) * 500, 0, 100);
+  const expected = expectedValueForPrediction(p);
+  const expectedScale = p.market === "home_run" ? 0.35 : p.market === "total_bases" ? 2.5 : p.market === "strikeouts" ? 9 : p.market.startsWith("hrr_") ? 2.5 : 2;
+  const expectedScore = clamp((expected / expectedScale) * 100, 0, 100);
+  return projectionScore * 0.35 + modelScore * 0.25 + confidenceScore * 0.20 + edgeScore * 0.15 + expectedScore * 0.05;
+}
+
 function sortStructuredPicksByRank(a, b) {
   return (
+    analyzerPickQuality(b) - analyzerPickQuality(a) ||
     getRecommendationMarketPriority(a.market) - getRecommendationMarketPriority(b.market) ||
-    b._edge - a._edge ||
     b._legProb - a._legProb ||
-    (b.rec_score ?? 0) - (a.rec_score ?? 0) ||
-    (b.confidence ?? 0) - (a.confidence ?? 0)
+    (b.rec_score ?? 0) - (a.rec_score ?? 0)
   );
 }
 
@@ -801,7 +824,7 @@ export function buildHRParlays(predictions, selectedGamePks) {
     if (qualifyingPicks.length === 0) qualifyingPicks = hrPool;
     if (qualifyingPicks.length === 0) return [];
 
-    const ranked = [...qualifyingPicks].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+    const ranked = [...qualifyingPicks].sort((a, b) => analyzerPickQuality(b) - analyzerPickQuality(a) || (b._legProb ?? legProbabilityFor(b)) - (a._legProb ?? legProbabilityFor(a)));
     const parlays = [];
     const used = new Set();
 
