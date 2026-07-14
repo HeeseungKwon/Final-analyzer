@@ -509,6 +509,8 @@ export function scoreHitterV2(name, ctx) {
     parkFactorHr: ((ctx.parkFactor ?? 100) / 100) * 1.12,
     windHrMult: 1.05,
     teamImpliedTotal: ctx.teamImpliedTotal ?? 4.5,
+    opponentTeamImpliedTotal: ctx.opponentTeamImpliedTotal ?? 4.5,
+    expectedRunDifferential: ctx.expectedRunDifferential ?? 0,
     onbaseRateAhead: ctx.onbaseRateAhead ?? 0.32,
     onbaseRateBehind: ctx.onbaseRateBehind ?? 0.32,
     gbFbRatio: ctx.oppPitcherGbFbRatio ?? 1.0,
