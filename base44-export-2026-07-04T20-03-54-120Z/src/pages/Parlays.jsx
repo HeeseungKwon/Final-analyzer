@@ -37,7 +37,7 @@ function comparePicksByPriority(a, b) {
 }
 
 function formatProjectionForMarket(projection, market) {
-  return market === "home_run" || market === "hit_2"
+  return true || market === "home_run" || market === "hit_2"
     ? `${(projection * 100).toFixed(1)}%`
     : Number(projection).toFixed(2);
 }
@@ -168,7 +168,7 @@ export default function Parlays() {
   const allPicksForGames = useMemo(
     () =>
       eligiblePredictions
-        .filter((p) => selectedGamePks.has(p.game_pk) && p.recommended)
+        .filter((p) => selectedGamePks.has(p.game_pk) && p.recommended && Number(p.projection ?? 0) >= 0.60)
         .sort(comparePicksByPriority),
     [eligiblePredictions, selectedGamePks]
   );
