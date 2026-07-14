@@ -244,10 +244,12 @@ export async function runAnalysis(dateArg, onProgress, opts = {}) {
         continue;
       }
 
-      const [oppSPStats, oppSPHand, teamStats] = await Promise.all([
+      const opponentTeamId = side === "home" ? g.away_team_id : g.home_team_id;
+      const [oppSPStats, oppSPHand, teamStats, opponentTeamStats] = await Promise.all([
         getSPStats(oppSP),
         getOppPitcherHand(oppSP),
         getTeamHitting(teamId),
+        getTeamHitting(opponentTeamId),
       ]);
       const oppPitcherStats = oppSPStats
         ? {
