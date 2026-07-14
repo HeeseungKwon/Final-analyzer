@@ -123,12 +123,13 @@ function buildAccuracyFromPicks(gradedPicks) {
     byMarket[p.market].n += 1;
     if (p.hit) byMarket[p.market].hits += 1;
 
-    const bucket = Math.min(90, Math.max(0, Math.floor((p.confidence ?? 0) / 10) * 10));
+    const modelPercent = Number(p.projection ?? 0) * 100;
+    const bucket = Math.min(90, Math.max(0, Math.floor(modelPercent / 10) * 10));
     const key = `${p.market}_${bucket}`;
     if (!byBucket[key]) {
       byBucket[key] = {
         market: p.market,
-        confidence_bucket: bucket,
+        model_percent_bucket: bucket,
         n_predictions: 0,
         n_hits: 0,
       };
@@ -148,7 +149,7 @@ function buildAccuracyFromPicks(gradedPicks) {
     }))
     .sort((a, b) => {
       if (a.market !== b.market) return a.market.localeCompare(b.market);
-      return b.confidence_bucket - a.confidence_bucket;
+      return b.model_percent_bucket - a.model_percent_bucket;
     });
 
   return { marketSummary, buckets };
@@ -353,7 +354,7 @@ export default function Review() {
           </Card>
 
           <Card>
-            <CardHeader><CardTitle>Calibration (confidence bucket → hit rate)</CardTitle></CardHeader>
+            <CardHeader><CardTitle>Calibration (Model % bucket → hit rate)</CardTitle></CardHeader>
             <CardContent>
               {(data?.buckets ?? []).length === 0 ? (
                 <div className="py-8 text-center text-sm text-muted-foreground">No calibration data yet.</div>
@@ -372,9 +373,9 @@ export default function Review() {
                       <div className="space-y-2">
                         {rows
                           .map((b) => (
-                          <div key={`${b.market}-${b.confidence_bucket}`} className="flex items-center gap-3">
+                          <div key={`${b.market}-${b.model_percent_bucket}`} className="flex items-center gap-3">
                             <div className="w-16 shrink-0 text-xs tabular-nums text-muted-foreground">
-                              {b.confidence_bucket}-{b.confidence_bucket + 10}
+                              {b.model_percent_bucket}-{b.model_percent_bucket + 10}%
                             </div>
                             <div className="flex-1">
                               <BucketBar rate={b.hit_rate} />
