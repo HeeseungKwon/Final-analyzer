@@ -942,13 +942,15 @@ export function buildCustomParlay(selectedPicks, name) {
     legProb: legProbabilityFor(p),
     impliedProb: impliedProbForPrediction(p),
     projection: p.projection,
-    confidence: p.confidence,
+    confidence: p.confidence_score ?? p.confidence,
+    oddsFallback: parseFeatures(p.features)?.oddsFallback === true,
     tier: null,
     reason: "user-selected",
   }));
 
   const combined = legs.reduce((acc, l) => acc * l.legProb, 1);
   const be = breakEvenProbForLegs(legs.length);
+  const hasLiveOdds = legs.every((leg) => leg.oddsFallback !== true);
 
   return {
     name: name ?? `Custom ${legs.length}-Leg`,
@@ -956,7 +958,9 @@ export function buildCustomParlay(selectedPicks, name) {
     legs,
     combinedProb: combined,
     breakEvenProb: be,
-    edge: combined - be,
+    edge: hasLiveOdds ? combined - be : null,
+    ev: hasLiveOdds ? combined * Math.pow(1.8333333333, legs.length) - 1 : null,
+    hasLiveOdds,
     fairAmericanOdds: probToAmerican(combined),
   };
 }
