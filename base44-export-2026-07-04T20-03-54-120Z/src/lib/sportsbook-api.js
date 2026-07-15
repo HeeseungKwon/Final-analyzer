@@ -1,9 +1,9 @@
 // Real-time MLB sportsbook odds.
 //
 // Priority chain:
-//   1. SportsGameOdds         (when VITE_SPORTSGAMEODDS_API_KEY is configured)
-//   2. The Odds API via RapidAPI  (when VITE_RAPIDAPI_KEY is configured)
-//   3. JsonOdds via RapidAPI      (when VITE_JSONODDS_RAPIDAPI_KEY or VITE_RAPIDAPI_KEY is configured)
+//   1. SportsGameOdds         (through the server-side Vercel proxy)
+//   2. The Odds API via server-side RapidAPI proxy
+//   3. JsonOdds via server-side RapidAPI proxy
 //   4. ESPN summary / scoreboard API extraction
 //   5. Market-average defaults    (fallbackUsed: true, fallbackReason set)
 //
@@ -275,24 +275,19 @@ function hasSgoProxy() {
   return typeof window !== "undefined";
 }
 
-function getOddsApiRapidApiKey() {
-  return getEnvValue("VITE_ODDS_API_RAPIDAPI_KEY") || getEnvValue("VITE_RAPIDAPI_KEY");
-}
-
-function getJsonOddsRapidApiKey() {
-  return getEnvValue("VITE_JSONODDS_RAPIDAPI_KEY") || getEnvValue("VITE_RAPIDAPI_KEY");
-}
-
 function hasAnyRapidApiKey() {
-  return Boolean(getOddsApiRapidApiKey() || getJsonOddsRapidApiKey());
+  // Provider credentials live on the server; the browser never reads them.
+  return true;
 }
 
-function getRapidApiHeaders(apiKey, host) {
-  return {
-    "Content-Type": "application/json",
-    "x-rapidapi-key": apiKey,
-    "x-rapidapi-host": host,
-  };
+async function callThirdPartyProxy(payload) {
+  const response = await fetch("/api/third-party", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(`Third-party proxy ${response.status}`);
+  return response.json();
 }
 
 // ── SportsGameOdds integration ────────────────────────────────────────────────
@@ -546,17 +541,7 @@ async function fetchOddsApiEvents(gameDate) {
   const cached = oddsApiEventCache.get(gameDate);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
 
-  const apiKey = getOddsApiRapidApiKey();
-  if (!apiKey) return null;
-
-  const from = `${gameDate}T00:00:00Z`;
-  const to = `${gameDate}T23:59:59Z`;
-  const url = `https://${ODDS_API_RAPIDAPI_HOST}/v4/sports/${ODDS_API_SPORT}/events?dateFormat=iso&commenceTimeFrom=${encodeURIComponent(from)}&commenceTimeTo=${encodeURIComponent(to)}`;
-  const response = await fetch(url, {
-    headers: getRapidApiHeaders(apiKey, ODDS_API_RAPIDAPI_HOST),
-  });
-  if (!response.ok) throw new Error(`Odds API events ${response.status}`);
-  const data = await response.json();
+  const data = await callThirdPartyProxy({ provider: "oddsApi", operation: "events", gameDate });
   oddsApiEventCache.set(gameDate, { data, expiresAt: Date.now() + CACHE_TTL_MS });
   return data;
 }
@@ -590,19 +575,10 @@ async function fetchOddsApiProps(eventId, market) {
   const cached = oddsApiPropsCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
 
-  const apiKey = getOddsApiRapidApiKey();
-  if (!apiKey) return null;
-
   const apiMarket = ODDS_API_MARKET_MAP[market];
   if (!apiMarket) return null;
 
-  const books = PREFERRED_BOOKMAKERS.join(",");
-  const url = `https://${ODDS_API_RAPIDAPI_HOST}/v4/sports/${ODDS_API_SPORT}/events/${encodeURIComponent(eventId)}/odds?regions=us&markets=${apiMarket}&oddsFormat=american&bookmakers=${books}`;
-  const response = await fetch(url, {
-    headers: getRapidApiHeaders(apiKey, ODDS_API_RAPIDAPI_HOST),
-  });
-  if (!response.ok) throw new Error(`Odds API props ${response.status}`);
-  const data = await response.json();
+  const data = await callThirdPartyProxy({ provider: "oddsApi", operation: "props", eventId, market: apiMarket });
   oddsApiPropsCache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL_MS });
   return data;
 }
@@ -653,9 +629,6 @@ function extractPlayerPropFromOddsApi(propsData, market, playerName) {
 }
 
 async function tryRapidApiOdds(market, playerName, gameContext) {
-  const apiKey = getOddsApiRapidApiKey();
-  if (!apiKey) return null;
-
   const { gameDate, homeTeamName, awayTeamName } = gameContext ?? {};
   if (!gameDate || !homeTeamName || !awayTeamName) return null;
 
@@ -673,18 +646,11 @@ async function tryRapidApiOdds(market, playerName, gameContext) {
 
 
 async function verifyJsonOddsRapidApiAccess() {
-  const apiKey = getJsonOddsRapidApiKey();
-  if (!apiKey) return null;
-
   const cacheKey = "jsonodds:sports";
   const cached = oddsApiEventCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
 
-  const response = await fetch(`https://${JSONODDS_RAPIDAPI_HOST}/api/sports`, {
-    headers: getRapidApiHeaders(apiKey, JSONODDS_RAPIDAPI_HOST),
-  });
-  if (!response.ok) throw new Error(`JsonOdds sports ${response.status}`);
-  const data = await response.json();
+  const data = await callThirdPartyProxy({ provider: "jsonOdds", operation: "sports" });
   oddsApiEventCache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL_MS });
   return data;
 }
@@ -692,9 +658,7 @@ async function verifyJsonOddsRapidApiAccess() {
 // ── ESPN extraction ───────────────────────────────────────────────────────────
 
 async function fetchJson(url) {
-  const response = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!response.ok) throw new Error(`ESPN API ${response.status}`);
-  return response.json();
+  return callThirdPartyProxy({ provider: "espn", url });
 }
 
 async function fetchCachedPayload(key, url) {
