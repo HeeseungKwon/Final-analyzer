@@ -21,7 +21,7 @@ const JSONODDS_RAPIDAPI_HOST = "jsonjames-jsonodds-v1.p.rapidapi.com";
 const ODDS_API_SPORT = "baseball_mlb";
 
 // SportsGameOdds base URL (see https://sportsgameodds.com/docs/basics/setup)
-const SGO_BASE = "https://api.sportsgameodds.com/v2";
+const SGO_PROXY_BASE = "/api/sportsgameodds";
 const SGO_SPORT = "baseball";
 const SGO_LEAGUE = "MLB";
 
@@ -271,8 +271,8 @@ function getEnvValue(key) {
   return import.meta.env?.[key] || null;
 }
 
-function getSGOApiKey() {
-  return getEnvValue("VITE_SPORTSGAMEODDS_API_KEY");
+function hasSgoProxy() {
+  return typeof window !== "undefined";
 }
 
 function getOddsApiRapidApiKey() {
@@ -303,19 +303,14 @@ function getRapidApiHeaders(apiKey, host) {
  * This is a lightweight listing call — props are fetched per event separately.
  */
 async function fetchSGOEvents(gameDate) {
-  const apiKey = getSGOApiKey();
-  if (!apiKey) return null;
+  if (!hasSgoProxy()) return null;
 
-  const url = `${SGO_BASE}/events?sportID=${SGO_SPORT}&leagueID=${SGO_LEAGUE}&date=${gameDate}`;
-  const response = await fetch(url, {
-    headers: {
-      "x-api-key": apiKey,
-      "Content-Type": "application/json",
-    },
+  const params = new URLSearchParams({ date: gameDate, sportID: "baseball", leagueID: "MLB" });
+  const response = await fetch(`${SGO_PROXY_BASE}/events?${params.toString()}`, {
+    headers: { Accept: "application/json" },
   });
-  if (!response.ok) throw new Error(`SportsGameOdds events ${response.status}`);
+  if (!response.ok) throw new Error(`SportsGameOdds proxy events ${response.status}`);
   const data = await response.json();
-  // SGO returns { data: [...] } or the array directly — normalise
   return Array.isArray(data) ? data : (data?.data ?? []);
 }
 
@@ -325,32 +320,20 @@ async function fetchSGOEvents(gameDate) {
  * player lookups within that game — we never fetch the same event twice per day.
  */
 async function fetchSGOEventProps(sgoEventId, gameDate, forceRefresh = false) {
-  // 1. In-memory cache (within a single analysis run)
   if (!forceRefresh && sgoEventCache.has(sgoEventId)) {
     return sgoEventCache.get(sgoEventId);
   }
+  if (!hasSgoProxy()) return null;
 
-  const apiKey = getSGOApiKey();
-  if (!apiKey) return null;
-
-  const url = `${SGO_BASE}/events/${encodeURIComponent(sgoEventId)}?includePlayerProps=true`;
-  const response = await fetch(url, {
-    headers: {
-      "x-api-key": apiKey,
-      "Content-Type": "application/json",
-    },
+  const response = await fetch(`${SGO_PROXY_BASE}/events/${encodeURIComponent(sgoEventId)}`, {
+    headers: { Accept: "application/json" },
   });
-  if (!response.ok) throw new Error(`SportsGameOdds event props ${response.status}`);
+  if (!response.ok) throw new Error(`SportsGameOdds proxy event props ${response.status}`);
   const data = await response.json();
   const eventData = data?.data ?? data;
-
-  // 2. Save to in-memory cache
   sgoEventCache.set(sgoEventId, eventData);
-
-  // 3. Persist to localStorage snapshot
   const books = extractBookmakerNamesFromSGOEvent(eventData);
   saveEventToSnapshot(gameDate, sgoEventId, eventData, books);
-
   return eventData;
 }
 
@@ -513,7 +496,7 @@ function extractPlayerPropFromSGO(eventData, market, playerName) {
  */
 async function trySGOOdds(market, playerName, gameContext, forceRefresh = false) {
   const apiKey = getSGOApiKey();
-  if (!apiKey) return null;
+  if (!hasSgoProxy()) return null;
 
   const { gameDate, homeTeamName, awayTeamName } = gameContext ?? {};
   if (!gameDate || !homeTeamName || !awayTeamName) return null;
