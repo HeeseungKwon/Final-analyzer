@@ -495,7 +495,6 @@ function extractPlayerPropFromSGO(eventData, market, playerName) {
  *   4. Extract the player prop from the (now-cached) event data.
  */
 async function trySGOOdds(market, playerName, gameContext, forceRefresh = false) {
-  const apiKey = getSGOApiKey();
   if (!hasSgoProxy()) return null;
 
   const { gameDate, homeTeamName, awayTeamName } = gameContext ?? {};
