@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "buildCommand": "npm --prefix base44-export-2026-07-04T20-03-54-120Z run build",
-  "outputDirectory": "base44-export-2026-07-04T20-03-54-120Z/dist",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
   "framework": "vite"
 }
