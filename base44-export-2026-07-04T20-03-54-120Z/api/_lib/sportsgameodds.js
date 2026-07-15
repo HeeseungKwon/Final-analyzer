@@ -23,6 +23,7 @@ export async function fetchSgo(path, searchParams = {}) {
     }
   }
 
+  console.info("[SportsGameOdds] upstream URL:", url.toString());
   const response = await fetch(url, { headers: buildHeaders() });
   const text = await response.text();
   let body;
