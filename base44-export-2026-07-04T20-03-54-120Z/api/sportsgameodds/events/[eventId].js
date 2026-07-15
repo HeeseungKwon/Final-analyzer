@@ -12,7 +12,10 @@ export default async function handler(req, res) {
   }
 
   try {
-    const result = await fetchSgo(`/events/${encodeURIComponent(eventId)}`, {
+    // SportsGameOdds v2 retrieves a single event through GET /events
+    // with eventID and includePlayerProps query parameters.
+    const result = await fetchSgo("/events", {
+      eventID: eventId,
       includePlayerProps: "true",
     });
     return res.status(result.status).json(result.body);
