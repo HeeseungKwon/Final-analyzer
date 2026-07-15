@@ -77,3 +77,23 @@ Documentation: [https://docs.db.com/Integrations/Using-GitHub](https://docs.db.c
 Base44 CLI command reference: [https://docs.db.com/developers/references/cli/commands/introduction](https://docs.db.com/developers/references/cli/commands/introduction)
 
 Support: [https://app.db.com/support](https://app.db.com/support)
+
+## Vercel deployment and server-side API keys
+
+This project is deployable to Vercel using the root `vercel.json`. Third-party API calls must run through server-side routes under `/api`; the browser must not call SportsGameOdds directly.
+
+Configure this server-only Vercel Environment Variable:
+
+```text
+SPORTSGAMEODDS_API_KEY=your_rotated_key
+```
+
+Do not use a `VITE_` prefix for secrets. Do not commit `.env.local`. The repository already ignores `.env.*` while allowing the safe `.env.example` template.
+
+After deployment, verify the server proxy with:
+
+```text
+GET /api/health/sportsgameodds?date=YYYY-MM-DD
+```
+
+The response reports only request status and event count; it never returns the API key.
