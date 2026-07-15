@@ -811,7 +811,7 @@ export async function fetchRealtimeOdds(gamePk, market, playerName, gameContext,
     }
   }
 
-  // 2. Try RapidAPI / The Odds API (requires VITE_RAPIDAPI_KEY + gameContext)
+  // 2. Try RapidAPI / The Odds API through the server proxy (requires server env + gameContext)
   try {
     const rapidResult = await tryRapidApiOdds(market, playerName, gameContext);
     if (rapidResult) {
