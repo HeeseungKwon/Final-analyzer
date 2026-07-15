@@ -15,7 +15,8 @@ export default async function handler(req, res) {
     const result = await fetchSgo("/events", {
       sportID: "BASEBALL",
       leagueID: "MLB",
-      date,
+      startsAfter: date ? `${date}T00:00:00.000Z` : undefined,
+      startsBefore: date ? `${date}T23:59:59.999Z` : undefined,
       oddsAvailable,
       limit,
     });
