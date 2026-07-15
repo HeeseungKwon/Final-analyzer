@@ -836,7 +836,7 @@ export async function fetchRealtimeOdds(gamePk, market, playerName, gameContext,
   }
 
   // 1. SportsGameOdds (snapshot-backed, event-level fetch)
-  if (getSGOApiKey()) {
+  if (hasSgoProxy()) {
     try {
       const sgoResult = await trySGOOdds(market, playerName, gameContext, refreshOdds);
       if (sgoResult) {
@@ -890,7 +890,7 @@ export async function fetchRealtimeOdds(gamePk, market, playerName, gameContext,
   }
 
   // 5. Market-average defaults — mark as fallback so parlays can exclude them
-  const fallbackReason = !hasAnyRapidApiKey() && !getSGOApiKey()
+  const fallbackReason = !hasAnyRapidApiKey() && !hasSgoProxy()
     ? FALLBACK_REASON_RAPIDAPI_NOT_CONFIGURED
     : "no-match";
   return buildFallbackOdds(market, fallbackReason);
