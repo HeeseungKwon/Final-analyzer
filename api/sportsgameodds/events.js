@@ -13,7 +13,7 @@ export default async function handler(req, res) {
     }
 
     const result = await fetchSgo("/events", {
-      sportID: "baseball",
+      sportID: "BASEBALL",
       leagueID: "MLB",
       date,
       oddsAvailable,
