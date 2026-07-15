@@ -97,3 +97,15 @@ GET /api/health/sportsgameodds?date=YYYY-MM-DD
 ```
 
 The response reports only request status and event count; it never returns the API key.
+
+
+### Additional server-side provider variables
+
+Optional future providers must also use server-only Vercel Environment Variables. Supported names for the current proxy are:
+
+- `ODDS_API_RAPIDAPI_KEY`
+- `JSONODDS_RAPIDAPI_KEY`
+- `WEATHER_API_KEY` (reserved)
+- `AI_API_KEY` (reserved)
+
+Do not prefix these with `VITE_`; browser code must call `/api/third-party` or another internal `/api/*` route.
