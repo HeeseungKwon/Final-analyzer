@@ -12,6 +12,9 @@ import Register from '@/pages/Register';
 import ForgotPassword from '@/pages/ForgotPassword';
 import ResetPassword from '@/pages/ResetPassword';
 import Today from '@/pages/Today';
+import Parlays from '@/pages/Parlays';
+import Review from '@/pages/Review';
+import Projections from '@/pages/Projections';
 import Excluded from '@/pages/Excluded';
 
 const routerBase = import.meta.env.BASE_URL || '/';
@@ -70,6 +73,9 @@ const AuthenticatedApp = () => {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
         <Route path="/" element={<Today />} />
+        <Route path="/parlays" element={<Parlays />} />
+        <Route path="/review" element={<Review />} />
+        <Route path="/projections" element={<Projections />} />
         <Route path="/excluded" element={<Excluded />} />
       </Route>
       <Route path="*" element={<PageNotFound />} />
