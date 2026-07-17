@@ -1,0 +1,3 @@
+import { scoreHitter as legacyScoreHitter, parkFactorFor } from "@/lib/scoring";
+export function scoreHitter(features, name = "") { return legacyScoreHitter(name, { season: features.season, recent: features.recent, split: features.split, battingOrder: features.battingOrder, expectedPA: features.expectedPA, parkFactor: features.park?.factor, teamImpliedTotal: features.teamContext?.runsPerGame, onbaseRateAhead: features.teamContext?.obp, onbaseRateBehind: features.teamContext?.obp, oppPitcherK: features.opponentPitcher?.k_percent, oppPitcherHrPerBF: features.opponentPitcher?.hr_allowed, oppPitcherGbFbRatio: features.opponentPitcher?.gb_fb_ratio }); }
+export { parkFactorFor };

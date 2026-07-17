@@ -10,6 +10,14 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Python
+__pycache__/
+*.py[cod]
+
+# Local generated artifacts
+work/
+base44-export-2026-07-04T20-03-54-120Z/work/
+
 # Environment files
 .env
 .env.*

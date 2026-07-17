@@ -2,13 +2,13 @@
  * Market Configuration Constants
  * 
  * Centralized definitions for all MLB player prop markets supported by the analyzer.
- * This module serves as the single source of truth for market metadata, labels,
+ * This module serves as the single source of truth for model output metadata, labels,
  * and projection unit specifications.
  */
 
 /**
  * Market Keys
- * Used to identify and filter different prop markets in predictions and parlays
+ * Used to identify and filter different model output markets
  */
 export const MARKET_KEYS = {
   HIT_2: 'hit_2',
@@ -26,7 +26,7 @@ export const CORE_HITTER_MARKETS = [
   MARKET_KEYS.TOTAL_BASES,
 ];
 
-// Reused by recommendation sorting and parlay building, so keep the normalized
+// Reused by recommendation sorting, so keep the normalized
 // lookup set module-scoped instead of recreating it at every call site.
 const CORE_HITTER_MARKET_SET = new Set(CORE_HITTER_MARKETS);
 
@@ -53,7 +53,7 @@ export const MARKET_LABELS = {
 };
 
 /**
- * Short-form market labels for compact displays (tables, parlays)
+ * Short-form market labels for compact displays
  * Used in places where space is limited
  */
 export const MARKET_SHORT_LABELS = {

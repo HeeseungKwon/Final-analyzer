@@ -1,0 +1,5 @@
+import { fetchHitterRecent, fetchHitterSplitVsHand, fetchHitterStats, fetchPitcherHand, fetchPitcherStats, fetchTeamHittingSO, fetchTeamHittingStats } from "@/data/mlb-api";
+export function buildPlayerDataApi() { return {
+  async hitter(player, season, opponentPitcherId, teamId) { const hand = opponentPitcherId ? await fetchPitcherHand(opponentPitcherId) : null; const [seasonStats, recent, split, opponentPitcher, teamStats] = await Promise.all([fetchHitterStats(player.id, season), fetchHitterRecent(player.id, season, 15), fetchHitterSplitVsHand(player.id, season, hand), opponentPitcherId ? fetchPitcherStats(opponentPitcherId, season) : null, fetchTeamHittingStats(teamId, season)]); return { player, season: seasonStats, recent, split, opponentPitcher, teamStats }; },
+  async pitcher(playerId, season, opponentTeamId) { const [seasonStats, opponentTeamStats] = await Promise.all([fetchPitcherStats(playerId, season), fetchTeamHittingSO(opponentTeamId, season)]); return { season: seasonStats, opponentTeamStats }; },
+}; }

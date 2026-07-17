@@ -1,0 +1,3 @@
+import { parkFactorFor } from "@/models/hitter-model";
+export function buildHitterFeatures(data, game) { const team = data.teamStats ?? {}; return { season: data.season, recent: data.recent, split: data.split, park: { factor: parkFactorFor(game.home_team_id) }, expectedPA: expectedPA(data.player.battingOrder), teamContext: { obp: team.obp ?? 0.32, runsPerGame: team.runsPerGame ?? 4.5 }, opponentPitcher: data.opponentPitcher ?? {}, battingOrder: data.player.battingOrder }; }
+function expectedPA(order) { if (order <= 2) return 4.5; if (order <= 5) return 4.2; if (order <= 7) return 3.9; return 3.6; }

@@ -1,11 +1,3 @@
-import {
-  calculateEdge,
-  calculateKelly,
-  calculateROI,
-  calculateRecommendedStake,
-  gradeEdge,
-  shouldRecommend,
-} from "@/lib/edge-calculator";
 
 /**
  * Analysis Engine v2: Monte Carlo-based MLB Prop Analyzer
@@ -36,22 +28,6 @@ const INFERRED_STDDEV_Z_SPREAD = 2.56;
 const MIN_INFERRED_STDDEV = 0.85;
 // Fallback spread when only the mean projection is available.
 const PROJECTION_STDDEV_RATIO = 0.18;
-const MONTE_CARLO_ITERATIONS = 100000;
-
-export const RECENT_FORM_WEIGHTS = {
-  season: 0.50,
-  last15: 0.35,
-  last7: 0.15,
-};
-
-export const RECOMMENDATION_SCORE_WEIGHTS = {
-  marketEdge: 0.35,
-  projectionQuality: 0.20,
-  matchupQuality: 0.15,
-  parkWeather: 0.10,
-  recentForm: 0.10,
-  riskAdjustment: 0.10,
-};
 
 const LINEUP_PA_TABLE = {
   1: 4.65, 2: 4.55, 3: 4.45, 4: 4.35, 5: 4.25,
@@ -117,28 +93,6 @@ function normalCdf(x, mean = 0, stdDev = 1) {
 function toConfidence(prob) {
   const p = Number(prob);
   return Math.round(clamp(Number.isFinite(p) ? p : 0, 0, 1) * 100);
-}
-
-function mean(values) {
-  if (!Array.isArray(values) || values.length === 0) return 0;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function stdDev(values) {
-  if (!Array.isArray(values) || values.length === 0) return 0;
-  const avg = mean(values);
-  const variance = values.reduce((sum, value) => sum + ((value - avg) ** 2), 0) / values.length;
-  return Math.sqrt(variance);
-}
-
-function countProbability(values, threshold) {
-  if (!Array.isArray(values) || values.length === 0) return 0;
-  return values.filter((value) => value >= threshold).length / values.length;
-}
-
-function safeRate(stats, field, fallback = null) {
-  const value = Number(stats?.[field]);
-  return Number.isFinite(value) ? value : fallback;
 }
 
 /**
@@ -379,37 +333,19 @@ function simulateGame(batter, pitcher, ctx, nSims = 100000) {
 /**
  * Compute final market probabilities from simulation
  */
-function computePropProbabilities(batter, pitcher, ctx, nSims = MONTE_CARLO_ITERATIONS) {
+function computePropProbabilities(batter, pitcher, ctx, nSims = 100000) {
   const sim = simulateGame(batter, pitcher, ctx, nSims);
-  const expectedHits = mean(sim.hits);
-  const expectedRuns = mean(sim.runs);
-  const expectedRBI = mean(sim.rbi);
-  const expectedHRR = mean(sim.hrr);
-  const expectedTotalBases = mean(sim.totalBases);
-  const expectedHomeRuns = mean(sim.homeRuns);
-
+  
+  const countProbs = (arr, threshold) => arr.filter(x => x >= threshold).length / arr.length;
+  
   return {
     expectedPA: estimateExpectedPA(ctx.lineupSpot ?? 5, ctx.teamImpliedTotal),
-    expectedHits,
-    expectedRuns,
-    expectedRBI,
-    expectedHRR,
-    expectedTotalBases,
-    expectedHomeRuns,
-    "2+ Hits": countProbability(sim.hits, 2),
-    "2+ Total Bases": countProbability(sim.totalBases, 2),
-    "3+ Total Bases": countProbability(sim.totalBases, 3),
-    "4+ Total Bases": countProbability(sim.totalBases, 4),
-    "1+ HR": countProbability(sim.homeRuns, 1),
-    "2+ HRR": countProbability(sim.hrr, 2),
-    "3+ HRR": countProbability(sim.hrr, 3),
-    "4+ HRR": countProbability(sim.hrr, 4),
-    volatility: {
-      hits: stdDev(sim.hits),
-      totalBases: stdDev(sim.totalBases),
-      homeRuns: stdDev(sim.homeRuns),
-      hrr: stdDev(sim.hrr),
-    },
+    "2+ Hits": countProbs(sim.hits, 2),
+    "2+ Total Bases": countProbs(sim.totalBases, 2),
+    "3+ Total Bases": countProbs(sim.totalBases, 3),
+    "1+ HR": countProbs(sim.homeRuns, 1),
+    "2+ HRR": countProbs(sim.hrr, 2),
+    "3+ HRR": countProbs(sim.hrr, 3),
   };
 }
 
@@ -447,43 +383,6 @@ function buildPitcherRates(ctx) {
   };
 }
 
-function calculateRecentFormScore(ctx) {
-  const seasonOps = safeRate(ctx.season, "ops", 0.700);
-  const recentOps = safeRate(ctx.recent, "ops", seasonOps);
-  const last7Ops = safeRate(ctx.last7, "ops", recentOps);
-  const last15Ops = safeRate(ctx.last15, "ops", recentOps);
-  const weightedOps = (seasonOps * RECENT_FORM_WEIGHTS.season)
-    + (last15Ops * RECENT_FORM_WEIGHTS.last15)
-    + (last7Ops * RECENT_FORM_WEIGHTS.last7);
-  return clamp((weightedOps - 0.550) / 0.350, 0, 1);
-}
-
-function calculateParkWeatherScore(ctx) {
-  const park = clamp((Number(ctx.parkFactor ?? 100) - 80) / 40, 0, 1);
-  const wind = clamp(Number(ctx.windHrMult ?? 1.0) / 1.25, 0, 1);
-  const runEnvironment = clamp((Number(ctx.teamImpliedTotal ?? LEAGUE_AVG_RUNS_PER_GAME) - 3.0) / 3.0, 0, 1);
-  return clamp((park * 0.45) + (wind * 0.20) + (runEnvironment * 0.35), 0, 1);
-}
-
-function calculateMatchupQuality(ctx, batter, pitcher) {
-  const contactAdvantage = clamp(0.5 + ((LEAGUE_AVG.k - (pitcher.k ?? LEAGUE_AVG.k)) * 1.5), 0, 1);
-  const powerAdvantage = clamp(0.5 + (((batter.hr ?? LEAGUE_AVG.hr) - (pitcher.hr ?? LEAGUE_AVG.hr)) * 6), 0, 1);
-  const tableSetter = clamp((estimateExpectedPA(ctx.battingOrder ?? 5, ctx.teamImpliedTotal) - 3.5) / 1.2, 0, 1);
-  return clamp((contactAdvantage * 0.35) + (powerAdvantage * 0.35) + (tableSetter * 0.30), 0, 1);
-}
-
-function riskAdjustmentFromVolatility(volatility, market) {
-  const scale = market === "home_run" ? 0.75 : market === "total_bases" ? 2.25 : 2.75;
-  return clamp(Number(volatility ?? 0) / scale, 0, 1);
-}
-
-function getMarketVolatility(probs, market) {
-  if (market === "total_bases") return probs.volatility?.totalBases;
-  if (market === "home_run") return probs.volatility?.homeRuns;
-  if (market === "hrr_2" || market === "hrr_3") return probs.volatility?.hrr;
-  return probs.volatility?.hits;
-}
-
 /**
  * Wrapper for current scoreHitter API compatibility
  * Converts new engine output to existing format
@@ -509,8 +408,6 @@ export function scoreHitterV2(name, ctx) {
     parkFactorHr: ((ctx.parkFactor ?? 100) / 100) * 1.12,
     windHrMult: 1.05,
     teamImpliedTotal: ctx.teamImpliedTotal ?? 4.5,
-    opponentTeamImpliedTotal: ctx.opponentTeamImpliedTotal ?? 4.5,
-    expectedRunDifferential: ctx.expectedRunDifferential ?? 0,
     onbaseRateAhead: ctx.onbaseRateAhead ?? 0.32,
     onbaseRateBehind: ctx.onbaseRateBehind ?? 0.32,
     gbFbRatio: ctx.oppPitcherGbFbRatio ?? 1.0,
@@ -519,9 +416,6 @@ export function scoreHitterV2(name, ctx) {
   };
   
   const probs = computePropProbabilities(batter, pitcher, gameCtx);
-  const recentFormScore = calculateRecentFormScore(ctx);
-  const parkWeatherScore = calculateParkWeatherScore(gameCtx);
-  const matchupQuality = calculateMatchupQuality(ctx, batter, pitcher);
   
   const markets = [
     { key: "hit_2", label: "2+ Hits", prob: probs["2+ Hits"] },
@@ -532,7 +426,7 @@ export function scoreHitterV2(name, ctx) {
   ];
   
   const trigger = `HR ${(batter.hr * 100).toFixed(1)}%, Contact ${(batter["1b"] * 100).toFixed(1)}%`;
-  const triggerStrength = clamp((matchupQuality - 0.5) * 2, -1, 1);
+  const triggerStrength = clamp((ctx.oppPitcherK - LEAGUE_AVG.k) * 2, -1, 1);
   
   for (const m of markets) {
     const floor = Math.max(0, m.prob - 0.15);
@@ -548,31 +442,10 @@ export function scoreHitterV2(name, ctx) {
       triggerStrength,
       features: {
         expectedPA,
-        expectedHits: probs.expectedHits,
-        expectedRuns: probs.expectedRuns,
-        expectedRBI: probs.expectedRBI,
-        expectedHRR: probs.expectedHRR,
-        expectedTotalBases: probs.expectedTotalBases,
-        expectedHomeRuns: probs.expectedHomeRuns,
-         teamImpliedTotal: gameCtx.teamImpliedTotal,
-         opponentTeamImpliedTotal: gameCtx.opponentTeamImpliedTotal,
-         expectedRunDifferential: gameCtx.expectedRunDifferential,
-        hrrOver1_5Prob: probs["2+ HRR"],
-        hrrOver2_5Prob: probs["3+ HRR"],
-        hrrOver3_5Prob: probs["4+ HRR"],
-        tbOver1_5Prob: probs["2+ Total Bases"],
-        tbOver2_5Prob: probs["3+ Total Bases"],
-        tbOver3_5Prob: probs["4+ Total Bases"],
-        hrProbability: probs["1+ HR"],
         battingOrder: ctx.battingOrder ?? null,
         oppPitcherK: ctx.oppPitcherK ?? null,
         parkFactor: ctx.parkFactor ?? 100,
         pOverLine: m.prob,
-        projectionQuality: m.prob,
-        matchupQuality,
-        parkWeatherScore,
-        recentFormScore,
-        riskAdjustment: riskAdjustmentFromVolatility(getMarketVolatility(probs, m.key), m.key),
       },
       dataQuality: dqBase,
       recommended: false,
@@ -628,112 +501,6 @@ export function scorePitcherV2(name, ctx) {
   });
   
   return out;
-}
-
-function scoreMarketEdge(edge) {
-  return clamp((Number(edge ?? 0) + 0.05) / 0.20, 0, 1);
-}
-
-function buildRecommendationScore({ edge, modelProbability, confidence, triggerStrength, dataQuality, features }) {
-  const projectionQuality = clamp(Number(features?.projectionQuality ?? modelProbability ?? 0), 0, 1);
-  const matchupQuality = clamp(Number(features?.matchupQuality ?? (0.5 + (Number(triggerStrength ?? 0) / 2))), 0, 1);
-  const parkWeather = clamp(Number(features?.parkWeatherScore ?? 0.5), 0, 1);
-  const recentForm = clamp(Number(features?.recentFormScore ?? 0.5), 0, 1);
-  const riskAdjustment = clamp(Number(features?.riskAdjustment ?? 0.35), 0, 1);
-  const dataQualityPenalty = dataQuality === "missing" ? 0.70 : dataQuality === "partial" ? 0.88 : 1;
-  const confidencePenalty = clamp(Number(confidence ?? 50) / 100, 0.35, 1);
-
-  const components = {
-    marketEdge: scoreMarketEdge(edge),
-    projectionQuality,
-    matchupQuality,
-    parkWeather,
-    recentForm,
-    riskAdjustment: 1 - riskAdjustment,
-  };
-
-  const weighted = Object.entries(RECOMMENDATION_SCORE_WEIGHTS).reduce(
-    (sum, [key, weight]) => sum + ((components[key] ?? 0) * weight),
-    0
-  );
-  const recommendationScore = clamp(weighted * dataQualityPenalty * confidencePenalty * 100, 0, 100);
-  const reasons = [
-    `Edge ${(Number(edge ?? 0) * 100).toFixed(1)} pts`,
-    `Model ${(Number(modelProbability ?? 0) * 100).toFixed(1)}%`,
-    `Matchup ${(matchupQuality * 100).toFixed(0)}/100`,
-    `Risk ${(riskAdjustment * 100).toFixed(0)}/100`,
-  ];
-
-  return { recommendationScore, recommendationComponents: components, recommendationReasons: reasons };
-}
-
-function inferModelProbability({ market, projection, floor, ceiling, marketLine }) {
-  const projectedValue = Number(projection);
-  // Non-strikeout markets already emit over-line probabilities from the Monte
-  // Carlo engine, so values in [0, 1] can be used directly as modelProb.
-  if (Number.isFinite(projectedValue) && projectedValue >= 0 && projectedValue <= 1 && market !== STRIKEOUT_MARKET) {
-    return clamp(projectedValue, 0, 1);
-  }
-
-  const line = Number.isFinite(Number(marketLine)) ? Number(marketLine) : null;
-  if (market === STRIKEOUT_MARKET && Number.isFinite(projectedValue)) {
-    const floorValue = Number(floor);
-    const ceilingValue = Number(ceiling);
-    const inferredStdDev = Number.isFinite(floorValue) && Number.isFinite(ceilingValue)
-      ? Math.max(MIN_INFERRED_STDDEV, Math.abs(ceilingValue - floorValue) / INFERRED_STDDEV_Z_SPREAD)
-      : Math.max(MIN_INFERRED_STDDEV, projectedValue * PROJECTION_STDDEV_RATIO);
-    const threshold = line ?? 5.5;
-    return clamp(1 - normalCdf(threshold, projectedValue, inferredStdDev), MIN_PROBABILITY, MAX_PROBABILITY);
-  }
-
-  return clamp(Number.isFinite(projectedValue) ? projectedValue : 0, 0, 1);
-}
-
-export function edgeBasedScoring({
-  market,
-  projection,
-  floor,
-  ceiling,
-  confidence,
-  dataQuality,
-  marketOdds,
-  impliedProbability,
-  marketLine,
-  triggerStrength = 0,
-  features = {},
-}) {
-  const modelProbability = inferModelProbability({ market, projection, floor, ceiling, marketLine });
-  const marketProbability = clamp(Number(impliedProbability) || 0.5, 0.01, 0.99);
-  const edge = calculateEdge(modelProbability, marketProbability);
-  const { expectedValue, roi, decimalOdds } = calculateROI(modelProbability, marketProbability, marketOdds);
-  const kellyFraction = calculateKelly(modelProbability, decimalOdds);
-  const recommendedStake = calculateRecommendedStake(kellyFraction);
-  const edgeGrade = gradeEdge(edge);
-  const recommendation = buildRecommendationScore({
-    edge,
-    modelProbability,
-    confidence,
-    triggerStrength,
-    dataQuality,
-    features,
-  });
-
-  return {
-    marketOdds,
-    marketLine: Number.isFinite(Number(marketLine)) ? Number(marketLine) : null,
-    impliedProbability: marketProbability,
-    modelProbability,
-    edge,
-    expectedValue,
-    roi,
-    kellyFraction,
-    recommendedStake,
-    edgeGrade,
-    recommendationScore: recommendation.recommendationScore,
-    recommendationComponents: recommendation.recommendationComponents,
-    recommendationReasons: recommendation.recommendationReasons,
-    recommended: shouldRecommend(edge) && recommendation.recommendationScore >= 50,
-  };
 }
 
 export function parkFactorFor(homeTeamId) {
