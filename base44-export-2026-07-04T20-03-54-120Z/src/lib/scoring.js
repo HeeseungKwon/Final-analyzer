@@ -160,6 +160,112 @@ function buildBatterRates(season, recent, split) {
 /**
  * Estimate PA outcome probabilities with Log5 + park/weather adjustments
  */
+const MARKET_FEATURE_WEIGHTS = {
+  home_run: {
+    // PowerScore is the single retained power representation. Its source
+    // components (Barrel%, HardHit%, xISO, etc.) are not added separately.
+    power_score: 1.00,
+  },
+  hit_2: {
+    // Log5 hit rates remain primary; ContactScore is retained only as a
+    // small residual contact-quality adjustment.
+    contact_score: 1.00,
+  },
+  total_bases: {
+    // Log5 supplies the hit baseline; PowerScore is the one retained
+    // extra-base-quality signal and is applied by outcome below.
+    power_score: 1.00,
+  },
+  hrr_2: {
+    // Expected PA already owns lineup/opportunity/run-context effects.
+    // Only independent availability/late-inning inputs remain here.
+    fatigue_adjustment: 0.50,
+    bullpen_adjustment: 0.50,
+  },
+  hrr_3: {
+    fatigue_adjustment: 0.50,
+    bullpen_adjustment: 0.50,
+  },
+};
+
+function derivedScore(ctx, snakeName, legacyName) {
+  const value = ctx?.derivedFeatures?.[snakeName] ?? ctx?.derivedFeatures?.[legacyName];
+  return Number.isFinite(Number(value)) ? Number(value) : null;
+}
+
+function derivedZ(score) {
+  return (score - 50) / 50;
+}
+
+function rawFeatureSignal(ctx, key) {
+  const aliases = {
+    barrel_pct: ["barrelPct", "barrel_pct", "BarrelPct"],
+    hard_hit_pct: ["hardHitPct", "hard_hit_pct", "HardHitPct"],
+    xba: ["xBA", "xba", "x_ba"],
+    babip: ["babip", "BABIP"],
+  };
+  const value = aliases[key]?.map((name) => ctx?.[name] ?? ctx?.derivedFeatures?.[name]).find((item) => item != null);
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  const baselines = { barrel_pct: 0.075, hard_hit_pct: 0.35, xba: 0.250, babip: 0.300 };
+  const baseline = baselines[key];
+  return clamp((Number(value) - baseline) / baseline, -1, 1);
+}
+
+function featureSignal(ctx, key) {
+  if (key === "park") return clamp(((Number(ctx.parkFactor) || 1) - 1) / 0.20, -1, 1);
+  if (key === "weather") return clamp(Math.log(Number(ctx.windHrMult) || 1) / Math.log(1.10), -1, 1);
+  if (key === "batting_order") return clamp((5 - (ctx.lineupSpot ?? 5)) / 4, -1, 1);
+  if (key === "expected_pa") return clamp((Number(ctx.expectedPAValue ?? 4.1) - 4.1) / 0.8, -1, 1);
+  if (key === "fatigue_adjustment") {
+    const score = derivedScore(ctx, key, "FatigueAdjustment");
+    return score == null ? null : derivedZ(score);
+  }
+  if (key === "bullpen_adjustment") {
+    const score = derivedScore(ctx, key, "BullpenAdjustment");
+    return score == null ? null : -derivedZ(score);
+  }
+  const raw = rawFeatureSignal(ctx, key);
+  if (raw != null) return raw;
+  const legacy = { power_score: "PowerScore", quality_of_contact: "QualityOfContact", contact_score: "ContactScore", plate_discipline: "PlateDiscipline", matchup_score: "MatchupScore", opportunity_score: "OpportunityScore", run_environment: "RunEnvironment", recent_form: "RecentForm" }[key];
+  const score = derivedScore(ctx, key, legacy);
+  // Use raw Barrel% only as a fallback when the aggregate PowerScore is not
+  // present; never combine both representations.
+  if (key === "power_score" && score == null) return rawFeatureSignal(ctx, "barrel_pct");
+  return score == null ? null : derivedZ(score);
+}
+
+function marketFeatureComposite(ctx) {
+  const weights = MARKET_FEATURE_WEIGHTS[ctx.market];
+  if (!weights) return 0;
+  let total = 0;
+  let weight = 0;
+  for (const [key, importance] of Object.entries(weights)) {
+    const signal = featureSignal(ctx, key);
+    if (signal == null) continue;
+    total += importance * signal;
+    weight += importance;
+  }
+  return weight ? total / weight : 0;
+}
+
+function applyMarketFeatureAdjustments(matchup, ctx) {
+  const composite = marketFeatureComposite(ctx);
+  // Each market has a distinct feature map above. The small caps keep these
+  // adjustments from overpowering season/recent/split rates already in Log5.
+  if (ctx.market === "home_run") {
+    matchup.hr *= clamp(1 + 0.16 * composite, 0.84, 1.16);
+  } else if (ctx.market === "hit_2") {
+    for (const outcome of ["1b", "2b", "3b"]) matchup[outcome] *= clamp(1 + 0.05 * composite, 0.95, 1.05);
+    matchup.k *= clamp(1 - 0.04 * composite, 0.96, 1.04);
+  } else if (ctx.market === "total_bases") {
+    // Power should affect extra-base outcomes more than singles. Park factors
+    // are already applied separately by outcome above.
+    matchup["2b"] *= clamp(1 + 0.08 * composite, 0.92, 1.08);
+    matchup["3b"] *= clamp(1 + 0.10 * composite, 0.90, 1.10);
+    matchup.hr *= clamp(1 + 0.14 * composite, 0.86, 1.14);
+  }
+}
+
 function estimatePAOutcomeProbs(batter, pitcher, ctx) {
   const outcomes = ["1b", "2b", "3b", "hr", "bb", "hbp", "k"];
   const matchup = {};
@@ -173,6 +279,7 @@ function estimatePAOutcomeProbs(batter, pitcher, ctx) {
   // Park factor & weather adjustments
   matchup["1b"] *= (ctx.parkFactor ?? 1.0);
   matchup["2b"] *= (ctx.parkFactor2b ?? 1.0);
+  matchup["3b"] *= (ctx.parkFactor3b ?? ctx.parkFactor2b ?? 1.0);
   matchup["hr"] *= (ctx.parkFactorHr ?? 1.0) * (ctx.windHrMult ?? 1.0);
   
   // GB/FB ratio adjustment for HR
@@ -180,10 +287,7 @@ function estimatePAOutcomeProbs(batter, pitcher, ctx) {
     matchup["hr"] *= Math.pow(1.0 / (ctx.gbFbRatio), 0.3);
   }
   
-  // Barrel% enhancement for HR
-  if (ctx.barrelPct != null) {
-    matchup["hr"] *= Math.pow(ctx.barrelPct / LEAGUE_AVG_BARREL_PCT, 0.4);
-  }
+  applyMarketFeatureAdjustments(matchup, ctx);
   
   // Ensure sum doesn't exceed 0.85
   let totalNonOut = Object.values(matchup).reduce((a, b) => a + b, 0);
@@ -197,10 +301,29 @@ function estimatePAOutcomeProbs(batter, pitcher, ctx) {
   return matchup;
 }
 
-function estimateExpectedPA(lineupSpot, teamImpliedTotal) {
+function estimateExpectedPA(lineupSpot, teamImpliedTotal, ctx = {}) {
   const basePA = LINEUP_PA_TABLE[lineupSpot] ?? 4.0;
   const totalAdj = Math.pow((teamImpliedTotal ?? LEAGUE_AVG_RUNS_PER_GAME) / LEAGUE_AVG_RUNS_PER_GAME, 0.15);
-  return basePA * totalAdj;
+  const starterIP = Number(ctx.opponentStarterExpectedIP);
+  const starterExposure = Number.isFinite(starterIP) ? clamp((9 - starterIP) / 4, 0, 1) : 0;
+  const parkRunFactor = Number(ctx.parkFactor);
+
+  // TODO: Add a bullpen-only quality feed. The current MLB Stats API payload
+  // has no reliever split, so BullpenAdjustment is honored only when supplied
+  // by the derived layer and is never fabricated here.
+  // More innings from the opposing starter generally means fewer late-game
+  // plate appearances; weaker available bullpen data is used only when the
+  // derived layer supplies it. No bullpen quality is fabricated here.
+  const starterAdj = Number.isFinite(starterIP) ? 1 - 0.025 * starterExposure : 1;
+  const parkAdj = Number.isFinite(parkRunFactor) ? 1 + 0.025 * (parkRunFactor - 1) : 1;
+  const baselinePA = basePA * totalAdj * starterAdj * parkAdj;
+  if (ctx.market !== "hrr_2" && ctx.market !== "hrr_3") return baselinePA;
+
+  // HRR is the market where opportunity and scoring context should alter PA
+  // most directly; the other markets retain the shared PA baseline so their
+  // derived features affect their own outcome probabilities instead.
+  const marketComposite = marketFeatureComposite({ ...ctx, expectedPAValue: baselinePA });
+  return baselinePA * clamp(1 + 0.045 * marketComposite, 0.955, 1.045);
 }
 
 /**
@@ -216,7 +339,7 @@ function estimateExpectedPA(lineupSpot, teamImpliedTotal) {
 function simulateGame(batter, pitcher, ctx, nSims = 100000) {
   const outcomes = ["1b", "2b", "3b", "hr", "bb", "hbp", "k", "out"];
   const probs = estimatePAOutcomeProbs(batter, pitcher, ctx);
-  const expectedPA = estimateExpectedPA(ctx.lineupSpot ?? 5, ctx.teamImpliedTotal);
+  const expectedPA = estimateExpectedPA(ctx.lineupSpot ?? 5, ctx.teamImpliedTotal, ctx);
   
   const p = outcomes.map(o => probs[o] ?? 0);
   const pSum = p.reduce((a, b) => a + b, 0);
@@ -334,22 +457,35 @@ function simulateGame(batter, pitcher, ctx, nSims = 100000) {
  * Compute final market probabilities from simulation
  */
 function computePropProbabilities(batter, pitcher, ctx, nSims = 100000) {
-  const sim = simulateGame(batter, pitcher, ctx, nSims);
-  
   const countProbs = (arr, threshold) => arr.filter(x => x >= threshold).length / arr.length;
-  
-  return {
-    expectedPA: estimateExpectedPA(ctx.lineupSpot ?? 5, ctx.teamImpliedTotal),
-    "2+ Hits": countProbs(sim.hits, 2),
-    "2+ Total Bases": countProbs(sim.totalBases, 2),
-    "3+ Total Bases": countProbs(sim.totalBases, 3),
-    "1+ HR": countProbs(sim.homeRuns, 1),
-    "2+ HRR": countProbs(sim.hrr, 2),
-    "3+ HRR": countProbs(sim.hrr, 3),
+  const markets = [
+    ["hit_2", "2+ Hits", "hits", 2],
+    ["total_bases", "2+ Total Bases", "totalBases", 2],
+    ["total_bases", "3+ Total Bases", "totalBases", 3],
+    ["home_run", "1+ HR", "homeRuns", 1],
+    ["hrr_2", "2+ HRR", "hrr", 2],
+    ["hrr_3", "3+ HRR", "hrr", 3],
+  ];
+  const probabilities = {
+    expectedPA: estimateExpectedPA(ctx.lineupSpot ?? 5, ctx.teamImpliedTotal, ctx),
   };
+  const simulations = {};
+
+  // Each market receives its own pre-simulation feature adjustment model while
+  // retaining the correlated outcome generation inside every simulation.
+  for (const [market, label, series, threshold] of markets) {
+    simulations[market] ??= simulateGame(batter, pitcher, { ...ctx, market }, nSims);
+    const sim = simulations[market];
+    probabilities[label] = countProbs(sim[series], threshold);
+  }
+  return probabilities;
 }
 
 function buildPitcherRates(ctx) {
+  // TODO: Fetch xFIP, SIERA, CSW%, Stuff+, Location+, Pitching+, barrel
+  // allowed, hard-hit allowed, and swinging-strike rate from a Statcast or
+  // trusted pitching source. Current verified fallbacks are K%, HR/BF, BB/BF,
+  // and GB/FB from the MLB Stats API.
   const rawBf = Number(ctx?.oppPitcherStats?.bf);
   const hasPitcherStats = Number.isFinite(rawBf) && rawBf > 0;
   const bf = hasPitcherStats ? rawBf : null;
@@ -396,7 +532,10 @@ export function scoreHitterV2(name, ctx) {
       ? "partial"
       : "ok";
   
-  const expectedPA = estimateExpectedPA(ctx.battingOrder ?? 5, ctx.teamImpliedTotal);
+  const expectedPA = estimateExpectedPA(ctx.battingOrder ?? 5, ctx.teamImpliedTotal, {
+    ...ctx,
+    parkFactor: (ctx.parkFactor ?? 100) / 100,
+  });
   
   // Blend season baseline + recent form (shrinkage) + handedness split (shrinkage)
   const batter = buildBatterRates(ctx.season, ctx.recent, ctx.split ?? null);
@@ -404,15 +543,23 @@ export function scoreHitterV2(name, ctx) {
   
   const gameCtx = {
     parkFactor: (ctx.parkFactor ?? 100) / 100,
-    parkFactor2b: ((ctx.parkFactor ?? 100) / 100) * 1.02,
-    parkFactorHr: ((ctx.parkFactor ?? 100) / 100) * 1.12,
-    windHrMult: 1.05,
+    // Only a verified venue factor is available. Component-specific and
+    // handedness-specific park factors remain TODO until supplied upstream.
+    parkFactor2b: (ctx.parkFactor ?? 100) / 100,
+    parkFactor3b: (ctx.parkFactor ?? 100) / 100,
+    parkFactorHr: (ctx.parkFactor ?? 100) / 100,
+    // Weather/wind are not present in the current game payload. A neutral
+    // multiplier avoids systematic HR inflation until a weather feed exists.
+    windHrMult: ctx.windHrMult,
     teamImpliedTotal: ctx.teamImpliedTotal ?? 4.5,
     onbaseRateAhead: ctx.onbaseRateAhead ?? 0.32,
     onbaseRateBehind: ctx.onbaseRateBehind ?? 0.32,
     gbFbRatio: ctx.oppPitcherGbFbRatio ?? 1.0,
     barrelPct: ctx.barrelPct,
     lineupSpot: ctx.battingOrder ?? 5,
+    opponentStarterExpectedIP: ctx.opponentStarterExpectedIP,
+    derivedFeatures: ctx.derivedFeatures,
+    market: ctx.market,
   };
   
   const probs = computePropProbabilities(batter, pitcher, gameCtx);
@@ -524,15 +671,21 @@ export function getHitterSimulationData(ctx) {
   
   const gameCtx = {
     parkFactor: (ctx.parkFactor ?? 100) / 100,
-    parkFactor2b: ((ctx.parkFactor ?? 100) / 100) * 1.02,
-    parkFactorHr: ((ctx.parkFactor ?? 100) / 100) * 1.12,
-    windHrMult: 1.05,
+    // No component-specific or handedness-specific park feed is available.
+    parkFactor2b: (ctx.parkFactor ?? 100) / 100,
+    parkFactor3b: (ctx.parkFactor ?? 100) / 100,
+    parkFactorHr: (ctx.parkFactor ?? 100) / 100,
+    // Weather/wind are not present in the current game payload.
+    windHrMult: ctx.windHrMult,
     teamImpliedTotal: ctx.teamImpliedTotal ?? 4.5,
     onbaseRateAhead: ctx.onbaseRateAhead ?? 0.32,
     onbaseRateBehind: ctx.onbaseRateBehind ?? 0.32,
     gbFbRatio: ctx.oppPitcherGbFbRatio ?? 1.0,
     barrelPct: ctx.barrelPct,
     lineupSpot: ctx.battingOrder ?? 5,
+    opponentStarterExpectedIP: ctx.opponentStarterExpectedIP,
+    derivedFeatures: ctx.derivedFeatures,
+    market: ctx.market,
   };
   
   return simulateGame(batter, pitcher, gameCtx, 100000);
