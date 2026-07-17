@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import AppShell from "@/components/mlb/AppShell";
 import PredRow from "@/components/mlb/PredRow";
+import RecommendationsDisplay from "@/components/mlb/RecommendationsDisplay";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -219,6 +220,13 @@ export default function Today() {
           {games.length} games · {predictions.length} predictions {isFetching && "· refreshing…"}
         </div>
       </div>
+
+      {/* Market-Specific Recommendations Display (when viewing all markets) */}
+      {market === "all" && !isLoading && predictions.length > 0 && (
+        <div className="mb-8">
+          <RecommendationsDisplay predictions={predictions} title="Market-Specific Recommendations" />
+        </div>
+      )}
 
       {market !== "all" && getMarketProjectionUnit(market) && (
         <div className="mb-4 rounded border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">

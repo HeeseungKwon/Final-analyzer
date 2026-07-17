@@ -40,6 +40,31 @@ export const RECOMMENDATION_MARKET_PRIORITY = {
 };
 
 /**
+ * Markets included in the recommendation system
+ * These are shown in the market-specific recommendation sections
+ */
+export const RECOMMENDATION_MARKETS = [
+  MARKET_KEYS.HOME_RUN,
+  MARKET_KEYS.HRR_2,
+  MARKET_KEYS.HRR_3,
+  MARKET_KEYS.TOTAL_BASES,
+  MARKET_KEYS.HIT_2,
+  // Note: STRIKEOUTS excluded as it's pitcher-specific
+];
+
+/**
+ * Market emojis for recommendation display sections
+ */
+export const MARKET_EMOJIS = {
+  home_run: '🏠',
+  hrr_2: '🔥',
+  hrr_3: '⚾',
+  total_bases: '🥎',
+  hit_2: '🎯',
+  strikeouts: '⚡',
+};
+
+/**
  * Human-readable market labels
  * Maps market keys to display-friendly names for UI rendering
  */
@@ -181,4 +206,32 @@ export function getMarketProjectionUnit(marketKey) {
 
 export function isProbabilityMarket(marketKey) {
   return PROBABILITY_MARKETS.has(normalizeMarketKey(marketKey));
+}
+
+/**
+ * Get emoji for a market (used in recommendation display)
+ * @param {string} marketKey - The market identifier
+ * @returns {string} The emoji or empty string if not found
+ */
+export function getMarketEmoji(marketKey) {
+  const key = normalizeMarketKey(marketKey);
+  return MARKET_EMOJIS[key] ?? '';
+}
+
+/**
+ * Check if a market should be displayed in recommendations
+ * @param {string} marketKey - The market identifier
+ * @returns {boolean}
+ */
+export function isRecommendationMarket(marketKey) {
+  const key = normalizeMarketKey(marketKey);
+  return RECOMMENDATION_MARKETS.includes(key);
+}
+
+/**
+ * Get the list of markets that should appear in recommendations
+ * @returns {Array} Array of market keys in display order
+ */
+export function getRecommendationMarketsInOrder() {
+  return RECOMMENDATION_MARKETS;
 }

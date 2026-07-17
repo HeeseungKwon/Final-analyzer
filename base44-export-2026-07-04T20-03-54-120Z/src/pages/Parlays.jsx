@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { buildParlays, buildHRParlays, buildCustomParlay as buildCustomParlayFn } from "@/lib/parlays";
 import { recalculateParlayStatus } from "@/lib/utils/parlaySync";
 import { getMarketLabel, getRecommendationMarketPriority, isCoreHitterMarket } from "@/lib/constants/markets";
+import { augmentPredictionsWithZScores } from "@/lib/recommendations";
 import { computePickGrade, gradeColorClass } from "@/lib/utils/pickGrade";
 
 const DAILY_PARLAYS_KEY = "dailyParlays_v1";
@@ -28,8 +29,18 @@ function todayStr() {
 }
 
 function comparePicksByPriority(a, b) {
+  // First prioritize markets (HRR_2, HRR_3, HIT_2, TOTAL_BASES, etc.)
+  const marketCmp = getRecommendationMarketPriority(a.market) - getRecommendationMarketPriority(b.market);
+  if (marketCmp !== 0) return marketCmp;
+  
+  // Within same market, sort by z-score if available (normalized comparison within market)
+  const hasZScores = Number.isFinite(a.z_score) && Number.isFinite(b.z_score);
+  if (hasZScores) {
+    return (b.z_score ?? 0) - (a.z_score ?? 0);
+  }
+  
+  // Fallback to rec_score (which stores confidence) if z-scores not available
   return (
-    getRecommendationMarketPriority(a.market) - getRecommendationMarketPriority(b.market) ||
     (b.rec_score ?? 0) - (a.rec_score ?? 0) ||
     (b.confidence ?? 0) - (a.confidence ?? 0) ||
     String(a.player_name ?? "").localeCompare(String(b.player_name ?? ""))
@@ -164,10 +175,15 @@ export default function Parlays() {
 
   // All recommended picks from selected games, sorted with core hitter markets first.
   const allPicksForGames = useMemo(
-    () =>
-      eligiblePredictions
-        .filter((p) => selectedGamePks.has(p.game_pk) && p.recommended && Number(p.projection ?? 0) >= 0.60)
-        .sort(comparePicksByPriority),
+    () => {
+      const filtered = eligiblePredictions
+        .filter((p) => selectedGamePks.has(p.game_pk) && p.recommended && Number(p.projection ?? 0) >= 0.60);
+      
+      // Augment with z-scores for market-normalized ranking
+      augmentPredictionsWithZScores(filtered);
+      
+      return filtered.sort(comparePicksByPriority);
+    },
     [eligiblePredictions, selectedGamePks]
   );
 
