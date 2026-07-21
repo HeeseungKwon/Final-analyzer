@@ -1,15 +1,13 @@
+import { getStoredModelProbability } from "@/lib/model-probability";
+
 function buildStoredFeatures(features, score) {
   const baseFeatures = features && typeof features === "object" ? features : {};
   const scoreFeatures = score?.features && typeof score.features === "object" ? score.features : {};
-  const projectionValue = Number(score?.projection);
 
   return {
     ...baseFeatures,
     ...scoreFeatures,
-    modelProbability:
-      score?.market !== "strikeouts" && Number.isFinite(projectionValue) && projectionValue >= 0 && projectionValue <= 1
-        ? projectionValue
-        : null,
+    modelProbability: getStoredModelProbability(score?.market, score?.projection),
     confidenceScore: Number.isFinite(Number(score?.confidence)) ? Number(score.confidence) : null,
   };
 }

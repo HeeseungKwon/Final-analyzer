@@ -2,6 +2,7 @@ import { TableRow, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { getMarketLabel } from "@/lib/constants/markets";
+import { getDisplayModelProbability } from "@/lib/model-probability";
 
 /**
  * PredRow Component
@@ -109,10 +110,11 @@ export default function PredRow({ p, expanded, onToggle }) {
    * Extract probability sources for display
    * Shows model vs Vegas vs ballpark comparison
    */
-  const projectionValue = Number(p.projection);
-  const modelProb = Number.isFinite(Number(features?.modelProbability))
-    ? Number(features.modelProbability)
-    : (p.market !== "strikeouts" && projectionValue >= 0 && projectionValue <= 1 ? projectionValue : null);
+  const modelProb = getDisplayModelProbability({
+    market: p.market,
+    projection: p.projection,
+    explicitModelProbability: features?.modelProbability,
+  });
   const impliedProb = features?.impliedProbability ?? features?.impliedMarketProb ?? null;
   const marketOdds = features?.marketOdds ?? null;
   const edge = features?.edge ?? features?.modelEdge ?? null;

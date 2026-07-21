@@ -18,6 +18,8 @@ const LEAGUE_AVG = {
 
 const LEAGUE_AVG_RUNS_PER_GAME = 4.5;
 const LEAGUE_AVG_BARREL_PCT = 0.075;
+const LEAGUE_AVG_SLUGGING = 0.400;
+const LEAGUE_AVG_BATTING_AVERAGE = 0.250;
 const ESTIMATED_SINGLE_SHARE_OF_HITS = 0.85;
 const STRIKEOUT_MARKET = "strikeouts";
 const MIN_PROBABILITY = 0.01;
@@ -28,6 +30,8 @@ const INFERRED_STDDEV_Z_SPREAD = 2.56;
 const MIN_INFERRED_STDDEV = 0.85;
 // Fallback spread when only the mean projection is available.
 const PROJECTION_STDDEV_RATIO = 0.18;
+const POWER_SIGNAL_WEIGHTS = { hr: 0.5, extraBase: 0.3, slug: 0.2 };
+const CONTACT_SIGNAL_WEIGHTS = { hitRate: 0.45, average: 0.35, strikeout: 0.20 };
 
 const LINEUP_PA_TABLE = {
   1: 4.65, 2: 4.55, 3: 4.45, 4: 4.35, 5: 4.25,
@@ -228,46 +232,60 @@ function statValue(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function blendedRate(ctx, extractor, fallback, recentWeight = 0.35, splitWeight = 0.20) {
+  let value = statRate(ctx.season, extractor) ?? fallback;
+  value = blendWithCredibility(value, statRate(ctx.recent, extractor), ctx.recent?.pa, recentWeight, 45);
+  value = blendWithCredibility(value, statRate(ctx.split, extractor), ctx.split?.pa, splitWeight, 70);
+  return value;
+}
+
+function blendedValue(ctx, seasonValue, recentValue, splitValue, fallback, recentWeight = 0.30, splitWeight = 0.15) {
+  let value = statValue(seasonValue) ?? fallback;
+  value = blendWithCredibility(value, statValue(recentValue), ctx.recent?.pa, recentWeight, 45);
+  value = blendWithCredibility(value, statValue(splitValue), ctx.split?.pa, splitWeight, 70);
+  return value;
+}
+
 function fallbackPowerSignal(ctx) {
   const leagueExtraBaseRate = LEAGUE_AVG["2b"] + LEAGUE_AVG["3b"] + LEAGUE_AVG.hr;
-
-  let hrRate = statRate(ctx.season, (stats) => stats.home_runs) ?? LEAGUE_AVG.hr;
-  hrRate = blendWithCredibility(hrRate, statRate(ctx.recent, (stats) => stats.home_runs), ctx.recent?.pa, 0.35, 45);
-  hrRate = blendWithCredibility(hrRate, statRate(ctx.split, (stats) => stats.home_runs), ctx.split?.pa, 0.20, 70);
-
-  let extraBaseRate = statRate(ctx.season, (stats) => (stats.doubles ?? 0) + (stats.triples ?? 0) + (stats.home_runs ?? 0)) ?? leagueExtraBaseRate;
-  extraBaseRate = blendWithCredibility(extraBaseRate, statRate(ctx.recent, (stats) => (stats.doubles ?? 0) + (stats.triples ?? 0) + (stats.home_runs ?? 0)), ctx.recent?.pa, 0.30, 45);
-  extraBaseRate = blendWithCredibility(extraBaseRate, statRate(ctx.split, (stats) => (stats.doubles ?? 0) + (stats.triples ?? 0) + (stats.home_runs ?? 0)), ctx.split?.pa, 0.20, 70);
-
-  let slugging = statValue(ctx.season?.slg) ?? 0.400;
-  slugging = blendWithCredibility(slugging, statValue(ctx.recent?.slg), ctx.recent?.pa, 0.25, 45);
-  slugging = blendWithCredibility(slugging, statValue(ctx.split?.slg), ctx.split?.pa, 0.15, 70);
+  const hrRate = blendedRate(ctx, (stats) => stats.home_runs, LEAGUE_AVG.hr);
+  const extraBaseRate = blendedRate(
+    ctx,
+    (stats) => (stats.doubles ?? 0) + (stats.triples ?? 0) + (stats.home_runs ?? 0),
+    leagueExtraBaseRate,
+    0.30,
+    0.20
+  );
+  const slugging = blendedValue(ctx, ctx.season?.slg, ctx.recent?.slg, ctx.split?.slg, LEAGUE_AVG_SLUGGING, 0.25, 0.15);
 
   const hrSignal = clamp((hrRate - LEAGUE_AVG.hr) / LEAGUE_AVG.hr, -1, 1);
   const extraBaseSignal = clamp((extraBaseRate - leagueExtraBaseRate) / leagueExtraBaseRate, -1, 1);
-  const slugSignal = clamp((slugging - 0.400) / 0.400, -1, 1);
-  return clamp(hrSignal * 0.5 + extraBaseSignal * 0.3 + slugSignal * 0.2, -1, 1);
+  const slugSignal = clamp((slugging - LEAGUE_AVG_SLUGGING) / LEAGUE_AVG_SLUGGING, -1, 1);
+  return clamp(
+    hrSignal * POWER_SIGNAL_WEIGHTS.hr +
+    extraBaseSignal * POWER_SIGNAL_WEIGHTS.extraBase +
+    slugSignal * POWER_SIGNAL_WEIGHTS.slug,
+    -1,
+    1
+  );
 }
 
 function fallbackContactSignal(ctx) {
   const leagueHitRate = LEAGUE_AVG["1b"] + LEAGUE_AVG["2b"] + LEAGUE_AVG["3b"] + LEAGUE_AVG.hr;
-
-  let hitRate = statRate(ctx.season, (stats) => stats.hits) ?? leagueHitRate;
-  hitRate = blendWithCredibility(hitRate, statRate(ctx.recent, (stats) => stats.hits), ctx.recent?.pa, 0.35, 45);
-  hitRate = blendWithCredibility(hitRate, statRate(ctx.split, (stats) => stats.hits), ctx.split?.pa, 0.20, 70);
-
-  let battingAverage = statValue(ctx.season?.avg) ?? 0.250;
-  battingAverage = blendWithCredibility(battingAverage, statValue(ctx.recent?.avg), ctx.recent?.pa, 0.30, 45);
-  battingAverage = blendWithCredibility(battingAverage, statValue(ctx.split?.avg), ctx.split?.pa, 0.15, 70);
-
-  let strikeoutRate = statRate(ctx.season, (stats) => stats.so) ?? LEAGUE_AVG.k;
-  strikeoutRate = blendWithCredibility(strikeoutRate, statRate(ctx.recent, (stats) => stats.so), ctx.recent?.pa, 0.35, 45);
-  strikeoutRate = blendWithCredibility(strikeoutRate, statRate(ctx.split, (stats) => stats.so), ctx.split?.pa, 0.20, 70);
+  const hitRate = blendedRate(ctx, (stats) => stats.hits, leagueHitRate);
+  const battingAverage = blendedValue(ctx, ctx.season?.avg, ctx.recent?.avg, ctx.split?.avg, LEAGUE_AVG_BATTING_AVERAGE);
+  const strikeoutRate = blendedRate(ctx, (stats) => stats.so, LEAGUE_AVG.k);
 
   const hitSignal = clamp((hitRate - leagueHitRate) / leagueHitRate, -1, 1);
-  const averageSignal = clamp((battingAverage - 0.250) / 0.250, -1, 1);
+  const averageSignal = clamp((battingAverage - LEAGUE_AVG_BATTING_AVERAGE) / LEAGUE_AVG_BATTING_AVERAGE, -1, 1);
   const strikeoutSignal = clamp((LEAGUE_AVG.k - strikeoutRate) / LEAGUE_AVG.k, -1, 1);
-  return clamp(hitSignal * 0.45 + averageSignal * 0.35 + strikeoutSignal * 0.20, -1, 1);
+  return clamp(
+    hitSignal * CONTACT_SIGNAL_WEIGHTS.hitRate +
+    averageSignal * CONTACT_SIGNAL_WEIGHTS.average +
+    strikeoutSignal * CONTACT_SIGNAL_WEIGHTS.strikeout,
+    -1,
+    1
+  );
 }
 
 function featureSignal(ctx, key) {
