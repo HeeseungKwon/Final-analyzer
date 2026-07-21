@@ -99,6 +99,7 @@ export default function PredRow({ p, expanded, onToggle }) {
     projection: p.projection,
     explicitModelProbability: features?.modelProbability,
   });
+  // getIndependentConfidence returns an integer (rounded) score from 0-100.
   const confidence = getIndependentConfidence(p, features, modelProb);
   const dataQuality = normalizeDataQuality(p.data_quality);
   const recommendationDrivers = getRecommendationDrivers(p, features);
@@ -126,7 +127,7 @@ export default function PredRow({ p, expanded, onToggle }) {
         <TableCell className="text-right">
           <div className="flex items-center justify-end gap-2">
             <span className={`inline-flex rounded px-2 py-0.5 text-xs font-semibold ${confidenceColor(confidence)}`}>
-              {confidenceLabel(confidence)} {Math.round(confidence)}
+              {confidenceLabel(confidence)} {confidence}
             </span>
             {p.recommended && <Badge className="bg-emerald-600 hover:bg-emerald-600 text-[10px]">REC</Badge>}
             {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
@@ -142,7 +143,7 @@ export default function PredRow({ p, expanded, onToggle }) {
                 <div>
                   <div className="text-muted-foreground">Confidence</div>
                   <div className={`inline-flex rounded px-2 py-0.5 text-xs font-semibold ${confidenceColor(confidence)}`}>
-                    {confidenceLabel(confidence)} {Math.round(confidence)}
+                    {confidenceLabel(confidence)} {confidence}
                   </div>
                 </div>
                 <div>

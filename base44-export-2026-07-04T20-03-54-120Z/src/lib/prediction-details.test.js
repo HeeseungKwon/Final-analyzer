@@ -54,5 +54,6 @@ test("getIndependentConfidence uses reliability signals when stored confidence m
   const confidence = getIndependentConfidence(prediction, features, 0.41);
 
   assert.notEqual(confidence, 41);
+  assert.ok(confidence >= 60);
   assert.ok(confidence >= 0 && confidence <= 100);
 });
