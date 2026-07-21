@@ -3,6 +3,12 @@ import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { getMarketLabel } from "@/lib/constants/markets";
 import { getDisplayModelProbability } from "@/lib/model-probability";
+import {
+  getIndependentConfidence,
+  getRecommendationDrivers,
+  normalizeDataQuality,
+  toPercentLabel,
+} from "@/lib/prediction-details";
 
 /**
  * PredRow Component
@@ -60,28 +66,6 @@ function verdictColor(verdict) {
   }
 }
 
-function fmtPct(n, digits = 1) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return "—";
-  return `${(v * 100).toFixed(digits)}%`;
-}
-
-function fmtAmerican(odds) {
-  const value = Number(odds);
-  if (!Number.isFinite(value) || value === 0) return "—";
-  return value > 0 ? `+${value}` : `${value}`;
-}
-
-function formatOddsFallbackReason(reason) {
-  const labels = {
-    "api-key-missing": "RapidAPI key not configured",
-    "rapidapi-not-configured": "RapidAPI key not configured",
-    "missing-params": "Missing game data",
-    "no-match": "No sportsbook match",
-  };
-  return labels[reason] ?? reason;
-}
-
 function getCountProjectionValue(p) {
   switch (p.market) {
     case "hit_2":
@@ -115,25 +99,10 @@ export default function PredRow({ p, expanded, onToggle }) {
     projection: p.projection,
     explicitModelProbability: features?.modelProbability,
   });
-  const impliedProb = features?.impliedProbability ?? features?.impliedMarketProb ?? null;
-  const marketOdds = features?.marketOdds ?? null;
-  const edge = features?.edge ?? features?.modelEdge ?? null;
-  const roi = features?.roi ?? null;
-  const expectedValue = features?.expectedValue ?? null;
-  const kellyFraction = features?.kellyFraction ?? null;
-  const recommendedStake = features?.recommendedStake ?? null;
-  const marketLine = features?.marketLine ?? null;
-  const oddsSource = features?.oddsSource ?? null;
-  const oddsProvider = features?.sportsbookProvider ?? null;
-  const oddsFallback = features?.oddsFallback ?? null;
-  const oddsFallbackReason = features?.oddsFallbackReason ?? null;
-  const oddsStatusReason = oddsFallbackReason ? formatOddsFallbackReason(oddsFallbackReason) : null;
-  const tbOver15Prob = features?.tbOver1_5Prob;
-  const hrrOver15Prob = features?.hrrOver1_5Prob;
-  const hrrOver25Prob = features?.hrrOver2_5Prob;
-  const recommendationReasons = Array.isArray(features?.recommendationReasons) ? features.recommendationReasons : [];
-
-  const confidence = Number(p.confidence ?? 0);
+  // getIndependentConfidence returns an integer (rounded) score from 0-100.
+  const confidence = getIndependentConfidence(p, features, modelProb);
+  const dataQuality = normalizeDataQuality(p.data_quality);
+  const recommendationDrivers = getRecommendationDrivers(p, features);
 
   return (
     <>
@@ -158,7 +127,7 @@ export default function PredRow({ p, expanded, onToggle }) {
         <TableCell className="text-right">
           <div className="flex items-center justify-end gap-2">
             <span className={`inline-flex rounded px-2 py-0.5 text-xs font-semibold ${confidenceColor(confidence)}`}>
-              {confidenceLabel(confidence)} {Math.round(confidence)}
+              {confidenceLabel(confidence)} {confidence}
             </span>
             {p.recommended && <Badge className="bg-emerald-600 hover:bg-emerald-600 text-[10px]">REC</Badge>}
             {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
@@ -172,136 +141,62 @@ export default function PredRow({ p, expanded, onToggle }) {
               {/* Core Metrics Grid */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div>
-                  <div className="text-muted-foreground">Floor</div>
-                  <div className="font-semibold tabular-nums">{fmt(p.floor, 3)}</div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground">Ceiling</div>
-                  <div className="font-semibold tabular-nums">{fmt(p.ceiling, 3)}</div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground">Trigger</div>
-                  <div className="font-semibold tabular-nums">{fmt(p.trigger_strength, 2)}</div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground">Data Quality</div>
-                  <div className="font-semibold">{p.data_quality}</div>
-                </div>
-              </div>
-
-              {(modelProb != null || impliedProb != null || marketOdds != null) && (
-                <div className="border-t border-border/40 pt-2">
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Market vs Model</div>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-                    <div>
-                      <div className="text-muted-foreground">Implied Probability</div>
-                      <div className="font-semibold tabular-nums">{fmtPct(impliedProb)}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Model Probability</div>
-                      <div className="font-semibold tabular-nums">{fmtPct(modelProb)}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Odds Source</div>
-                      <div className="font-semibold">{oddsProvider ?? oddsSource ?? "—"}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Odds Status</div>
-                      <div className="font-semibold">
-                        {oddsFallback ? `Fallback${oddsStatusReason ? ` (${oddsStatusReason})` : ""}` : "Live"}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">EV (1u stake)</div>
-                      <div className="font-semibold tabular-nums">{oddsFallback ? "N/A" : fmt(expectedValue, 3)}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">ROI</div>
-                      <div className="font-semibold tabular-nums">{oddsFallback ? "N/A" : Number.isFinite(Number(roi)) ? `${Number(roi).toFixed(1)}%` : "—"}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Kelly / Stake</div>
-                      <div className="font-semibold tabular-nums">
-                        {oddsFallback ? "N/A" : `${fmtPct(kellyFraction)} / ${fmtPct(recommendedStake)}`}
-                      </div>
-                    </div>
+                  <div className="text-muted-foreground">Confidence</div>
+                  <div className={`inline-flex rounded px-2 py-0.5 text-xs font-semibold ${confidenceColor(confidence)}`}>
+                    {confidenceLabel(confidence)} {confidence}
                   </div>
                 </div>
-              )}
-
-              {p.verdict && (
-                <div className="border-t border-border/40 pt-2">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-muted-foreground">Status:</span>
+                <div>
+                  <div className="text-muted-foreground">Projection</div>
+                  <div className="font-semibold tabular-nums">
+                    {fmtProjection(p)}
+                    {modelProb != null ? (
+                      <span className="ml-2 text-muted-foreground font-normal">
+                        ({toPercentLabel(modelProb, 0)} model prob)
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground">Verdict</div>
+                  {p.verdict ? (
                     <Badge variant="outline" className={"text-[10px] " + verdictColor(p.verdict)}>
                       {p.verdict.toUpperCase()}
                     </Badge>
+                  ) : (
+                    <div className="font-semibold">—</div>
+                  )}
+                </div>
+                <div>
+                  <div className="text-muted-foreground">Data Quality</div>
+                  <span className={`inline-flex rounded px-2 py-0.5 text-xs font-semibold ${dataQuality.badgeClassName}`}>
+                    {dataQuality.label}
+                  </span>
+                </div>
+              </div>
+
+              <div className="border-t border-border/40 pt-2">
+                <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Recommendation Drivers</div>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {recommendationDrivers.map((reason) => (
+                    <span key={reason} className="rounded bg-muted px-2 py-0.5 font-medium">{reason}</span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="border-t border-border/40 pt-2">
+                <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Floor / Ceiling</div>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <div className="text-muted-foreground">Floor</div>
+                    <div className="font-semibold tabular-nums">{toPercentLabel(p.floor, 0)}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Ceiling</div>
+                    <div className="font-semibold tabular-nums">{toPercentLabel(p.ceiling, 0)}</div>
                   </div>
                 </div>
-              )}
-
-              {p.verdict_note && (
-                <div className="border-t border-border/40 pt-2">
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Verdict Note</div>
-                  <div className="text-xs text-muted-foreground leading-relaxed">{p.verdict_note}</div>
-                </div>
-              )}
-
-              {recommendationReasons.length > 0 && (
-                <div className="border-t border-border/40 pt-2">
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Recommendation Drivers</div>
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    {recommendationReasons.map((reason) => (
-                      <span key={reason} className="rounded bg-muted px-2 py-0.5 font-medium">{reason}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Feature Breakdown */}
-              {Object.keys(features).length > 0 && (
-                <div className="border-t border-border/40 pt-2">
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">Features</div>
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    {Object.entries(features)
-                      .filter(([k, v]) => !["verdict", "verdictNote", "recommendationReasons", "recommendationComponents"].includes(k) && (v == null || typeof v !== "object"))
-                      .map(([k, v]) => (
-                        <span key={k} className="rounded bg-muted px-2 py-0.5">
-                          <span className="text-muted-foreground">{k}:</span>{" "}
-                          <span className="font-medium tabular-nums">{typeof v === "number" ? v.toFixed(3) : String(v ?? "—")}</span>
-                        </span>
-                      ))}
-                  </div>
-                </div>
-              )}
-
-              {(p.market === "total_bases" && tbOver15Prob != null) ||
-              (p.market === "hrr_2" && hrrOver15Prob != null) ||
-              (p.market === "hrr_3" && hrrOver25Prob != null) ? (
-                <div className="border-t border-border/40 pt-2">
-                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Line Probabilities</div>
-                  <div className="space-y-1 text-xs">
-                    {p.market === "total_bases" && tbOver15Prob != null && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">TB O1.5:</span>
-                        <span className="font-semibold tabular-nums">{fmt(tbOver15Prob * 100, 1)}%</span>
-                      </div>
-                    )}
-                    {p.market === "hrr_2" && hrrOver15Prob != null && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">HRR O1.5:</span>
-                        <span className="font-semibold tabular-nums">{fmt(hrrOver15Prob * 100, 1)}%</span>
-                      </div>
-                    )}
-                    {p.market === "hrr_3" && hrrOver25Prob != null && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">HRR O2.5:</span>
-                        <span className="font-semibold tabular-nums">{fmt(hrrOver25Prob * 100, 1)}%</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ) : null}
+              </div>
             </div>
           </TableCell>
         </TableRow>
