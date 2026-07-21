@@ -211,6 +211,65 @@ function rawFeatureSignal(ctx, key) {
   return clamp((Number(value) - baseline) / baseline, -1, 1);
 }
 
+function blendWithCredibility(baseValue, candidateValue, sampleSize, maxWeight, k) {
+  if (candidateValue == null) return baseValue;
+  const weight = maxWeight * credibilityWeight(Number(sampleSize) || 0, k);
+  return baseValue * (1 - weight) + candidateValue * weight;
+}
+
+function statRate(stats, numerator) {
+  const pa = Number(stats?.pa);
+  if (!Number.isFinite(pa) || pa <= 0) return null;
+  return clamp((Number(numerator(stats)) || 0) / pa, 0, 1);
+}
+
+function statValue(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function fallbackPowerSignal(ctx) {
+  const leagueExtraBaseRate = LEAGUE_AVG["2b"] + LEAGUE_AVG["3b"] + LEAGUE_AVG.hr;
+
+  let hrRate = statRate(ctx.season, (stats) => stats.home_runs) ?? LEAGUE_AVG.hr;
+  hrRate = blendWithCredibility(hrRate, statRate(ctx.recent, (stats) => stats.home_runs), ctx.recent?.pa, 0.35, 45);
+  hrRate = blendWithCredibility(hrRate, statRate(ctx.split, (stats) => stats.home_runs), ctx.split?.pa, 0.20, 70);
+
+  let extraBaseRate = statRate(ctx.season, (stats) => (stats.doubles ?? 0) + (stats.triples ?? 0) + (stats.home_runs ?? 0)) ?? leagueExtraBaseRate;
+  extraBaseRate = blendWithCredibility(extraBaseRate, statRate(ctx.recent, (stats) => (stats.doubles ?? 0) + (stats.triples ?? 0) + (stats.home_runs ?? 0)), ctx.recent?.pa, 0.30, 45);
+  extraBaseRate = blendWithCredibility(extraBaseRate, statRate(ctx.split, (stats) => (stats.doubles ?? 0) + (stats.triples ?? 0) + (stats.home_runs ?? 0)), ctx.split?.pa, 0.20, 70);
+
+  let slugging = statValue(ctx.season?.slg) ?? 0.400;
+  slugging = blendWithCredibility(slugging, statValue(ctx.recent?.slg), ctx.recent?.pa, 0.25, 45);
+  slugging = blendWithCredibility(slugging, statValue(ctx.split?.slg), ctx.split?.pa, 0.15, 70);
+
+  const hrSignal = clamp((hrRate - LEAGUE_AVG.hr) / LEAGUE_AVG.hr, -1, 1);
+  const extraBaseSignal = clamp((extraBaseRate - leagueExtraBaseRate) / leagueExtraBaseRate, -1, 1);
+  const slugSignal = clamp((slugging - 0.400) / 0.400, -1, 1);
+  return clamp(hrSignal * 0.5 + extraBaseSignal * 0.3 + slugSignal * 0.2, -1, 1);
+}
+
+function fallbackContactSignal(ctx) {
+  const leagueHitRate = LEAGUE_AVG["1b"] + LEAGUE_AVG["2b"] + LEAGUE_AVG["3b"] + LEAGUE_AVG.hr;
+
+  let hitRate = statRate(ctx.season, (stats) => stats.hits) ?? leagueHitRate;
+  hitRate = blendWithCredibility(hitRate, statRate(ctx.recent, (stats) => stats.hits), ctx.recent?.pa, 0.35, 45);
+  hitRate = blendWithCredibility(hitRate, statRate(ctx.split, (stats) => stats.hits), ctx.split?.pa, 0.20, 70);
+
+  let battingAverage = statValue(ctx.season?.avg) ?? 0.250;
+  battingAverage = blendWithCredibility(battingAverage, statValue(ctx.recent?.avg), ctx.recent?.pa, 0.30, 45);
+  battingAverage = blendWithCredibility(battingAverage, statValue(ctx.split?.avg), ctx.split?.pa, 0.15, 70);
+
+  let strikeoutRate = statRate(ctx.season, (stats) => stats.so) ?? LEAGUE_AVG.k;
+  strikeoutRate = blendWithCredibility(strikeoutRate, statRate(ctx.recent, (stats) => stats.so), ctx.recent?.pa, 0.35, 45);
+  strikeoutRate = blendWithCredibility(strikeoutRate, statRate(ctx.split, (stats) => stats.so), ctx.split?.pa, 0.20, 70);
+
+  const hitSignal = clamp((hitRate - leagueHitRate) / leagueHitRate, -1, 1);
+  const averageSignal = clamp((battingAverage - 0.250) / 0.250, -1, 1);
+  const strikeoutSignal = clamp((LEAGUE_AVG.k - strikeoutRate) / LEAGUE_AVG.k, -1, 1);
+  return clamp(hitSignal * 0.45 + averageSignal * 0.35 + strikeoutSignal * 0.20, -1, 1);
+}
+
 function featureSignal(ctx, key) {
   if (key === "park") return clamp(((Number(ctx.parkFactor) || 1) - 1) / 0.20, -1, 1);
   if (key === "weather") return clamp(Math.log(Number(ctx.windHrMult) || 1) / Math.log(1.10), -1, 1);
@@ -228,9 +287,10 @@ function featureSignal(ctx, key) {
   if (raw != null) return raw;
   const legacy = { power_score: "PowerScore", quality_of_contact: "QualityOfContact", contact_score: "ContactScore", plate_discipline: "PlateDiscipline", matchup_score: "MatchupScore", opportunity_score: "OpportunityScore", run_environment: "RunEnvironment", recent_form: "RecentForm" }[key];
   const score = derivedScore(ctx, key, legacy);
-  // Use raw Barrel% only as a fallback when the aggregate PowerScore is not
-  // present; never combine both representations.
-  if (key === "power_score" && score == null) return rawFeatureSignal(ctx, "barrel_pct");
+  if (key === "power_score" && score == null) {
+    return rawFeatureSignal(ctx, "barrel_pct") ?? fallbackPowerSignal(ctx);
+  }
+  if (key === "contact_score" && score == null) return fallbackContactSignal(ctx);
   return score == null ? null : derivedZ(score);
 }
 

@@ -2,7 +2,6 @@ import { TableRow, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { getMarketLabel } from "@/lib/constants/markets";
-import { computePickGrade, gradeColorClass } from "@/lib/utils/pickGrade";
 
 /**
  * PredRow Component
@@ -35,15 +34,24 @@ function confidenceColor(c) {
   return "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400";
 }
 
+function confidenceLabel(c) {
+  if (c >= 70) return "High";
+  if (c >= 50) return "Medium";
+  return "Low";
+}
+
 /**
  * Returns verdict label color for HR picks
  */
 function verdictColor(verdict) {
   switch (verdict) {
+    case "strong":
     case "recommended":
       return "border-emerald-500 text-emerald-600 bg-emerald-50";
+    case "middling":
     case "marginal":
       return "border-blue-500 text-blue-600 bg-blue-50";
+    case "fade":
     case "avoid":
       return "border-red-500 text-red-600 bg-red-50";
     default:
@@ -101,7 +109,10 @@ export default function PredRow({ p, expanded, onToggle }) {
    * Extract probability sources for display
    * Shows model vs Vegas vs ballpark comparison
    */
-  const modelProb = features?.modelProbability ?? p.projection;
+  const projectionValue = Number(p.projection);
+  const modelProb = Number.isFinite(Number(features?.modelProbability))
+    ? Number(features.modelProbability)
+    : (p.market !== "strikeouts" && projectionValue >= 0 && projectionValue <= 1 ? projectionValue : null);
   const impliedProb = features?.impliedProbability ?? features?.impliedMarketProb ?? null;
   const marketOdds = features?.marketOdds ?? null;
   const edge = features?.edge ?? features?.modelEdge ?? null;
@@ -120,7 +131,7 @@ export default function PredRow({ p, expanded, onToggle }) {
   const hrrOver25Prob = features?.hrrOver2_5Prob;
   const recommendationReasons = Array.isArray(features?.recommendationReasons) ? features.recommendationReasons : [];
 
-  const { letterGrade, numericGrade } = computePickGrade(p);
+  const confidence = Number(p.confidence ?? 0);
 
   return (
     <>
@@ -143,13 +154,9 @@ export default function PredRow({ p, expanded, onToggle }) {
         <TableCell className="text-right tabular-nums">{fmtProjection(p)}</TableCell>
         <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{p.trigger_text}</TableCell>
         <TableCell className="text-right">
-          <div className="flex items-center justify-end gap-1">
-            {/* Pick grade badge */}
-            <span
-              title={`Edge: ${numericGrade > 0 ? "+" : ""}${numericGrade} pts`}
-              className={"inline-block rounded px-1.5 py-0.5 text-xs font-bold tabular-nums " + gradeColorClass(letterGrade)}
-            >
-              {letterGrade}
+          <div className="flex items-center justify-end gap-2">
+            <span className={`inline-flex rounded px-2 py-0.5 text-xs font-semibold ${confidenceColor(confidence)}`}>
+              {confidenceLabel(confidence)} {Math.round(confidence)}
             </span>
             {p.recommended && <Badge className="bg-emerald-600 hover:bg-emerald-600 text-[10px]">REC</Badge>}
             {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
@@ -161,7 +168,7 @@ export default function PredRow({ p, expanded, onToggle }) {
           <TableCell colSpan={5}>
             <div className="space-y-4 py-2 text-xs">
               {/* Core Metrics Grid */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div>
                   <div className="text-muted-foreground">Floor</div>
                   <div className="font-semibold tabular-nums">{fmt(p.floor, 3)}</div>
@@ -175,12 +182,6 @@ export default function PredRow({ p, expanded, onToggle }) {
                   <div className="font-semibold tabular-nums">{fmt(p.trigger_strength, 2)}</div>
                 </div>
                 <div>
-                  <div className="text-muted-foreground">Edge</div>
-                  <div className="font-semibold tabular-nums">
-                    {oddsFallback ? "N/A" : edge == null ? "—" : `${Number(edge) > 0 ? "+" : ""}${fmt(Number(edge) * 100, 1)} pts`}
-                  </div>
-                </div>
-                <div>
                   <div className="text-muted-foreground">Data Quality</div>
                   <div className="font-semibold">{p.data_quality}</div>
                 </div>
@@ -190,13 +191,6 @@ export default function PredRow({ p, expanded, onToggle }) {
                 <div className="border-t border-border/40 pt-2">
                   <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Market vs Model</div>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-                    <div>
-                      <div className="text-muted-foreground">Sportsbook Odds</div>
-                      <div className="font-semibold tabular-nums">
-                        {fmtAmerican(marketOdds)}
-                        {marketLine != null ? ` @ ${Number(marketLine).toFixed(1)}` : ""}
-                      </div>
-                    </div>
                     <div>
                       <div className="text-muted-foreground">Implied Probability</div>
                       <div className="font-semibold tabular-nums">{fmtPct(impliedProb)}</div>
