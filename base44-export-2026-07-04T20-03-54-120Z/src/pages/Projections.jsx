@@ -54,10 +54,29 @@ function marketDisplay(market) {
 
 // Returns the "expected" value for a row given the market key
 function expectedValue(p, market) {
-  if (market.includes("HR") || market.includes("home_run")) return Number(p.expected_home_runs ?? 0);
   if (market.includes("HRR") || market.includes("hrr")) return Number(p.expected_hrr ?? 0);
+  if (market.includes("HR") || market.includes("home_run")) return Number(p.expected_home_runs ?? 0);
   if (market.includes("Total") || market.includes("total_bases")) return Number(p.expected_total_bases ?? 0);
   return Number(p.expected_hits ?? 0);
+}
+
+function featureEdge(prediction) {
+  const raw = prediction?.features;
+  if (raw == null) return null;
+  if (typeof raw === "object") {
+    const edge = Number(raw.edge ?? raw.modelEdge);
+    return Number.isFinite(edge) ? edge : null;
+  }
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      const edge = Number(parsed?.edge ?? parsed?.modelEdge);
+      return Number.isFinite(edge) ? edge : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 // Sort icon next to a column header
@@ -193,7 +212,19 @@ export default function Projections() {
     queryKey: ["projections", date],
     queryFn: async () => {
       const predictions = await db.entities.Prediction.filter({ game_date: date });
-      const withScores = predictions.filter(p => p.projection_score != null && p.expected_hits != null && Number(p.projection ?? 0) >= 0.60);
+      const withScores = predictions
+        .map((prediction) => {
+          const fallbackEdge = featureEdge(prediction);
+          return {
+            ...prediction,
+            projection_score: Number(prediction.projection_score ?? prediction.confidence ?? 0),
+            confidence_score: Number(prediction.confidence_score ?? prediction.confidence ?? 0),
+            market_edge: Number.isFinite(Number(prediction.market_edge))
+              ? Number(prediction.market_edge)
+              : (fallbackEdge ?? 0),
+          };
+        })
+        .filter((p) => p.projection_score > 0);
       return { predictions: withScores };
     },
   });

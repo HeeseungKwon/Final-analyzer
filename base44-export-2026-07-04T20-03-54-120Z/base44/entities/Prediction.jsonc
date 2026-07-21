@@ -14,6 +14,12 @@
     "player_name": {
       "type": "string"
     },
+    "team_id": {
+      "type": "number"
+    },
+    "team_name": {
+      "type": "string"
+    },
     "player_type": {
       "type": "string",
       "enum": [
@@ -27,6 +33,8 @@
         "hit_1",
         "hit_2",
         "hrr",
+        "hrr_2",
+        "hrr_3",
         "total_bases",
         "home_run",
         "strikeouts"
@@ -36,6 +44,15 @@
       "type": "number"
     },
     "projection": {
+      "type": "number"
+    },
+    "confidence_score": {
+      "type": "number"
+    },
+    "projection_score": {
+      "type": "number"
+    },
+    "market_edge": {
       "type": "number"
     },
     "expected_hits": {
@@ -83,6 +100,12 @@
       "type": "boolean"
     },
     "rec_score": {
+      "type": "number"
+    },
+    "player_rating": {
+      "type": "string"
+    },
+    "player_stars": {
       "type": "number"
     },
     "verdict": {

@@ -106,10 +106,14 @@ export default function Today() {
   const finalGamePks = new Set(
     games.filter((g) => isFinalGameStatus(g.status)).map((g) => g.game_pk)
   );
-  const predictions = (data?.predictions ?? []).filter((p) => {
-    if (Number(p.projection ?? 0) < 0.60) return false;
+  const recommendationPredictions = (data?.predictions ?? []).filter((p) => {
     // Exclude recommendations from games that are already final.
     if (p.recommended && finalGamePks.has(p.game_pk)) return false;
+    return true;
+  });
+
+  const predictions = recommendationPredictions.filter((p) => {
+    if (Number(p.projection ?? 0) < 0.60) return false;
     if (market !== "all" && p.market !== market) return false;
     if (onlyRec && !p.recommended) return false;
     return true;
@@ -224,7 +228,7 @@ export default function Today() {
       {/* Market-Specific Recommendations Display (when viewing all markets) */}
       {market === "all" && !isLoading && predictions.length > 0 && (
         <div className="mb-8">
-          <RecommendationsDisplay predictions={predictions} title="Market-Specific Recommendations" />
+          <RecommendationsDisplay predictions={recommendationPredictions} title="Market-Specific Recommendations" />
         </div>
       )}
 
