@@ -247,7 +247,7 @@ export function filterRecommendedPicks(predictions, options = {}) {
   return dedupePredictionsByMarketPlayer(predictions).filter(p => {
     const conf = Number(p.confidence) || 0;
     const proj = Number(p.projection) || 0;
-    return conf >= minConfidence && proj >= minProjection;
+    return Boolean(p.recommended) && conf >= minConfidence && proj >= minProjection;
   });
 }
 

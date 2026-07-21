@@ -13,8 +13,8 @@ import { generateRecommendations, filterRecommendedPicks } from "@/lib/recommend
 export default function RecommendationsDisplay({ predictions = [], title = "Best Picks" }) {
   // Filter to recommended picks with minimum projection
   const filtered = filterRecommendedPicks(predictions, {
-    minConfidence: 0,
-    minProjection: 0,
+    minConfidence: 60,
+    minProjection: 0.60,
   });
 
   if (filtered.length === 0) {

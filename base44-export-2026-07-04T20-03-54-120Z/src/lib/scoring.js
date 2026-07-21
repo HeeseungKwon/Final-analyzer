@@ -18,6 +18,10 @@ const LEAGUE_AVG = {
 
 const LEAGUE_AVG_RUNS_PER_GAME = 4.5;
 const LEAGUE_AVG_BARREL_PCT = 0.075;
+const LEAGUE_SLUGGING_AVG = 0.400;
+const LEAGUE_BATTING_AVERAGE = 0.250;
+const LEAGUE_AVG_EXTRA_BASE_RATE = LEAGUE_AVG["2b"] + LEAGUE_AVG["3b"] + LEAGUE_AVG.hr;
+const LEAGUE_AVG_HIT_RATE = LEAGUE_AVG["1b"] + LEAGUE_AVG["2b"] + LEAGUE_AVG["3b"] + LEAGUE_AVG.hr;
 const ESTIMATED_SINGLE_SHARE_OF_HITS = 0.85;
 const STRIKEOUT_MARKET = "strikeouts";
 const MIN_PROBABILITY = 0.01;
@@ -28,6 +32,10 @@ const INFERRED_STDDEV_Z_SPREAD = 2.56;
 const MIN_INFERRED_STDDEV = 0.85;
 // Fallback spread when only the mean projection is available.
 const PROJECTION_STDDEV_RATIO = 0.18;
+const POWER_SIGNAL_WEIGHTS = { hr: 0.5, extraBase: 0.3, slug: 0.2 };
+const CONTACT_SIGNAL_WEIGHTS = { hitRate: 0.45, average: 0.35, strikeout: 0.20 };
+const CREDIBILITY_K_RECENT = 45;
+const CREDIBILITY_K_SPLIT = 70;
 
 const LINEUP_PA_TABLE = {
   1: 4.65, 2: 4.55, 3: 4.45, 4: 4.35, 5: 4.25,
@@ -211,6 +219,92 @@ function rawFeatureSignal(ctx, key) {
   return clamp((Number(value) - baseline) / baseline, -1, 1);
 }
 
+/**
+ * Blend a baseline stat toward a candidate stat using sample-size credibility.
+ * `maxWeight` is the most influence the candidate can have once it has enough
+ * sample, while `k` controls how quickly that credibility is earned.
+ */
+function blendWithCredibility(baseValue, candidateValue, sampleSize, maxWeight, k) {
+  if (candidateValue == null) return baseValue;
+  const weight = maxWeight * credibilityWeight(Number(sampleSize) || 0, k);
+  return baseValue * (1 - weight) + candidateValue * weight;
+}
+
+function statRate(stats, numerator) {
+  const pa = Number(stats?.pa);
+  if (!Number.isFinite(pa) || pa <= 0) return null;
+  return clamp((Number(numerator(stats)) || 0) / pa, 0, 1);
+}
+
+function statValue(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+/**
+ * Blend a count-based rate (e.g. HR/PA, hits/PA, SO/PA) across season, recent,
+ * and split samples while limiting how much the smaller samples can move the
+ * season baseline.
+ */
+function blendedRate(ctx, extractor, fallback, recentWeight = 0.35, splitWeight = 0.20) {
+  let value = statRate(ctx.season, extractor) ?? fallback;
+  value = blendWithCredibility(value, statRate(ctx.recent, extractor), ctx.recent?.pa, recentWeight, CREDIBILITY_K_RECENT);
+  value = blendWithCredibility(value, statRate(ctx.split, extractor), ctx.split?.pa, splitWeight, CREDIBILITY_K_SPLIT);
+  return value;
+}
+
+/**
+ * Blend raw numeric stats (e.g. AVG or SLG) across season, recent, and split
+ * samples. Unlike `blendedRate`, the values are already normalized and do not
+ * need to be derived from count totals and plate appearances first.
+ */
+function blendedValue(ctx, seasonValue, recentValue, splitValue, fallback, recentWeight = 0.30, splitWeight = 0.15) {
+  let value = statValue(seasonValue) ?? fallback;
+  value = blendWithCredibility(value, statValue(recentValue), ctx.recent?.pa, recentWeight, CREDIBILITY_K_RECENT);
+  value = blendWithCredibility(value, statValue(splitValue), ctx.split?.pa, splitWeight, CREDIBILITY_K_SPLIT);
+  return value;
+}
+
+function fallbackPowerSignal(ctx) {
+  const hrRate = blendedRate(ctx, (stats) => stats.home_runs, LEAGUE_AVG.hr);
+  const extraBaseRate = blendedRate(
+    ctx,
+    (stats) => (stats.doubles ?? 0) + (stats.triples ?? 0) + (stats.home_runs ?? 0),
+    LEAGUE_AVG_EXTRA_BASE_RATE,
+    0.30,
+    0.20
+  );
+  const slugging = blendedValue(ctx, ctx.season?.slg, ctx.recent?.slg, ctx.split?.slg, LEAGUE_SLUGGING_AVG, 0.25, 0.15);
+
+  const hrSignal = clamp((hrRate - LEAGUE_AVG.hr) / LEAGUE_AVG.hr, -1, 1);
+  const extraBaseSignal = clamp((extraBaseRate - LEAGUE_AVG_EXTRA_BASE_RATE) / LEAGUE_AVG_EXTRA_BASE_RATE, -1, 1);
+  const slugSignal = clamp((slugging - LEAGUE_SLUGGING_AVG) / LEAGUE_SLUGGING_AVG, -1, 1);
+  return clamp(
+    hrSignal * POWER_SIGNAL_WEIGHTS.hr +
+    extraBaseSignal * POWER_SIGNAL_WEIGHTS.extraBase +
+    slugSignal * POWER_SIGNAL_WEIGHTS.slug,
+    -1,
+    1
+  );
+}
+
+function fallbackContactSignal(ctx) {
+  const hitRate = blendedRate(ctx, (stats) => stats.hits, LEAGUE_AVG_HIT_RATE);
+  const battingAverage = blendedValue(ctx, ctx.season?.avg, ctx.recent?.avg, ctx.split?.avg, LEAGUE_BATTING_AVERAGE);
+  const strikeoutRate = blendedRate(ctx, (stats) => stats.so, LEAGUE_AVG.k);
+
+  const hitSignal = clamp((hitRate - LEAGUE_AVG_HIT_RATE) / LEAGUE_AVG_HIT_RATE, -1, 1);
+  const averageSignal = clamp((battingAverage - LEAGUE_BATTING_AVERAGE) / LEAGUE_BATTING_AVERAGE, -1, 1);
+  const strikeoutSignal = clamp((LEAGUE_AVG.k - strikeoutRate) / LEAGUE_AVG.k, -1, 1);
+  return clamp(
+    hitSignal * CONTACT_SIGNAL_WEIGHTS.hitRate +
+    averageSignal * CONTACT_SIGNAL_WEIGHTS.average +
+    strikeoutSignal * CONTACT_SIGNAL_WEIGHTS.strikeout,
+    -1,
+    1
+  );
+}
+
 function featureSignal(ctx, key) {
   if (key === "park") return clamp(((Number(ctx.parkFactor) || 1) - 1) / 0.20, -1, 1);
   if (key === "weather") return clamp(Math.log(Number(ctx.windHrMult) || 1) / Math.log(1.10), -1, 1);
@@ -228,9 +322,10 @@ function featureSignal(ctx, key) {
   if (raw != null) return raw;
   const legacy = { power_score: "PowerScore", quality_of_contact: "QualityOfContact", contact_score: "ContactScore", plate_discipline: "PlateDiscipline", matchup_score: "MatchupScore", opportunity_score: "OpportunityScore", run_environment: "RunEnvironment", recent_form: "RecentForm" }[key];
   const score = derivedScore(ctx, key, legacy);
-  // Use raw Barrel% only as a fallback when the aggregate PowerScore is not
-  // present; never combine both representations.
-  if (key === "power_score" && score == null) return rawFeatureSignal(ctx, "barrel_pct");
+  if (key === "power_score" && score == null) {
+    return rawFeatureSignal(ctx, "barrel_pct") ?? fallbackPowerSignal(ctx);
+  }
+  if (key === "contact_score" && score == null) return fallbackContactSignal(ctx);
   return score == null ? null : derivedZ(score);
 }
 

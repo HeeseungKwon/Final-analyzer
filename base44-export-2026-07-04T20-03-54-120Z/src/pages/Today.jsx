@@ -126,7 +126,7 @@ export default function Today() {
           <div className="text-xs uppercase tracking-widest text-muted-foreground">Slate</div>
           <h1 className="text-3xl font-black tracking-tight">Today's projections</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Every projected hitter and starting pitcher is now compared against market implied odds. Picks where our model probability exceeds the market implied probability (edge {'>'} 0) are recommended.
+            Recommendations are ranked from the model's current probabilities and confidence scores. Confidence is shown directly on each recommended pick so the strongest plays are easier to scan.
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -241,7 +241,7 @@ export default function Today() {
             : getMarketProjectionUnit(market).unit === "probability"
               ? "Values are 0.000–1.000 (multiply by 100 for %)."
               : "Values are expected counts."}{" "}
-          <b className="text-foreground">Floor</b> / <b className="text-foreground">Ceiling</b> still show model probability bands in expanded details. Picks are recommended when our model probability exceeds market implied probability (edge {'>'} 0).
+          <b className="text-foreground">Floor</b> / <b className="text-foreground">Ceiling</b> still show the model range in expanded details.
         </div>
       )}
 
@@ -315,7 +315,7 @@ export default function Today() {
                               Proj{market !== "all" && getTodayProjectionLabel(market) ? ` (${getTodayProjectionLabel(market)})` : ""}
                              </TableHead>
                              <TableHead>Trigger</TableHead>
-                            <TableHead className="text-right">Edge / Rec</TableHead>
+                            <TableHead className="text-right">Confidence / Rec</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
