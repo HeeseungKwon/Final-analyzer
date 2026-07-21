@@ -37,6 +37,49 @@ export function groupPredictionsByMarket(predictions) {
   return grouped;
 }
 
+function normalizePlayerName(name) {
+  return String(name ?? "").trim().toLowerCase();
+}
+
+function getPlayerIdentity(prediction) {
+  const playerId = Number(prediction?.player_id ?? prediction?.playerId);
+  if (Number.isFinite(playerId) && playerId > 0) {
+    return `id:${playerId}`;
+  }
+  const normalizedName = normalizePlayerName(prediction?.player_name ?? prediction?.playerName);
+  return normalizedName ? `name:${normalizedName}` : "unknown-player";
+}
+
+function comparePredictionRank(a, b) {
+  const scoreA = Number(a?.projection_score ?? a?.confidence ?? 0);
+  const scoreB = Number(b?.projection_score ?? b?.confidence ?? 0);
+  if (scoreA !== scoreB) return scoreA - scoreB;
+
+  const projA = Number(a?.projection ?? 0);
+  const projB = Number(b?.projection ?? 0);
+  if (projA !== projB) return projA - projB;
+
+  const edgeA = Number(a?.market_edge ?? 0);
+  const edgeB = Number(b?.market_edge ?? 0);
+  return edgeA - edgeB;
+}
+
+export function dedupePredictionsByMarketPlayer(predictions) {
+  const bestByPlayerMarket = new Map();
+
+  for (const prediction of predictions ?? []) {
+    const market = prediction?.market || "unknown";
+    const identity = getPlayerIdentity(prediction);
+    const key = `${market}::${identity}`;
+    const existing = bestByPlayerMarket.get(key);
+    if (!existing || comparePredictionRank(prediction, existing) > 0) {
+      bestByPlayerMarket.set(key, prediction);
+    }
+  }
+
+  return Array.from(bestByPlayerMarket.values());
+}
+
 /**
  * Calculate mean and standard deviation for a set of confidence scores
  * @param {Array} confidences - Array of confidence values (0-100)
@@ -80,7 +123,8 @@ export function calculateZScore(confidence, mean, stddev) {
  * @returns {Array} Predictions with added z_score field
  */
 export function normalizePicksByMarket(predictions) {
-  const grouped = groupPredictionsByMarket(predictions);
+  const deduped = dedupePredictionsByMarketPlayer(predictions);
+  const grouped = groupPredictionsByMarket(deduped);
   const statsPerMarket = {};
   
   // Calculate stats for each market
@@ -90,7 +134,7 @@ export function normalizePicksByMarket(predictions) {
   }
   
   // Add z-score to each prediction
-  const normalized = predictions.map(pred => {
+  const normalized = deduped.map(pred => {
     const market = pred.market || 'unknown';
     const stats = statsPerMarket[market] || { mean: 0, stddev: 0 };
     const zScore = calculateZScore(Number(pred.confidence) || 0, stats.mean, stats.stddev);
@@ -155,9 +199,6 @@ export function generateRecommendations(predictions, options = {}) {
   // Normalize all predictions with z-scores
   const normalized = normalizePicksByMarket(predictions);
   
-  // Get overall best picks
-  const overallBestPicks = rankPicksOverall(normalized).slice(0, topN);
-  
   // Get market-specific rankings
   const grouped = groupPredictionsByMarket(normalized);
   const marketSpecificRankings = {};
@@ -171,6 +212,17 @@ export function generateRecommendations(predictions, options = {}) {
     const ranked = rankPicksWithinMarket(picks);
     marketSpecificRankings[market] = ranked.slice(0, topN);
   }
+
+  // Ensure each market can surface at least one top opportunity in overall picks.
+  const marketLeaders = Object.values(marketSpecificRankings)
+    .map((ranked) => ranked[0])
+    .filter(Boolean);
+  const selected = new Set(marketLeaders);
+  const remaining = normalized.filter((pick) => !selected.has(pick));
+  const overallBestPicks = [
+    ...rankPicksOverall(marketLeaders),
+    ...rankPicksOverall(remaining),
+  ].slice(0, topN);
   
   return {
     overallBestPicks,
@@ -191,8 +243,8 @@ export function generateRecommendations(predictions, options = {}) {
  */
 export function filterRecommendedPicks(predictions, options = {}) {
   const { minConfidence = 60, minProjection = 0.60 } = options;
-  
-  return predictions.filter(p => {
+
+  return dedupePredictionsByMarketPlayer(predictions).filter(p => {
     const conf = Number(p.confidence) || 0;
     const proj = Number(p.projection) || 0;
     return conf >= minConfidence && proj >= minProjection;

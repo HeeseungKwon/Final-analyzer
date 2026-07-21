@@ -455,8 +455,7 @@ export function rankPlayersByMarket(predictions, market) {
   const filtered = predictions.filter(
     (p) =>
       p.market === market &&
-      p.projection_score != null &&
-      p.expected_hits != null
+      p.projection_score != null
   );
 
   const ranked = filtered

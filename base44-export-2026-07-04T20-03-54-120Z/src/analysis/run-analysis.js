@@ -8,6 +8,23 @@ import { scoreHitter } from "@/models/hitter-model";
 import { scorePitcher } from "@/models/pitcher-model";
 import { buildPrediction } from "@/projection/projection-builder";
 
+function predictionDedupKey(prediction) {
+  const market = prediction?.market ?? "unknown";
+  const playerId = prediction?.player_id ?? prediction?.playerId;
+  const playerName = String(prediction?.player_name ?? prediction?.playerName ?? "").trim().toLowerCase();
+  const identity = playerId != null ? `id:${playerId}` : `name:${playerName || "unknown"}`;
+  return `${prediction?.game_pk ?? "unknown"}:${market}:${identity}`;
+}
+
+function chooseHigherRankedPrediction(a, b) {
+  const scoreA = Number(a?.projection_score ?? a?.confidence ?? 0);
+  const scoreB = Number(b?.projection_score ?? b?.confidence ?? 0);
+  if (scoreA === scoreB) {
+    return Number(a?.projection ?? 0) >= Number(b?.projection ?? 0) ? a : b;
+  }
+  return scoreA > scoreB ? a : b;
+}
+
 export async function runAnalysis(dateArg, onProgress) {
   const date = dateArg || todayIsoDate();
   const season = currentMlbSeason(new Date(date));
@@ -16,7 +33,7 @@ export async function runAnalysis(dateArg, onProgress) {
   const games = await loadGames(date);
   if (!games.length) return { date, games: 0, predictions: 0, excluded: 0, message: "No games scheduled." };
   const api = buildPlayerDataApi();
-  const predictions = [];
+  const predictionsByKey = new Map();
   const excluded = [];
   for (const game of games) {
     for (const side of ["home", "away"]) {
@@ -30,7 +47,12 @@ export async function runAnalysis(dateArg, onProgress) {
           const data = await api.hitter({ ...player, teamId, teamName }, season, opponentPitcherId, teamId);
           if (!data.season && !data.recent) { excluded.push({ game_date: date, player_id: player.id, player_name: player.fullName, reason: "No hitting stats available" }); continue; }
           const features = buildHitterFeatures(data, game);
-          for (const score of scoreHitter(features, player.fullName)) predictions.push(buildPrediction({ game, player: { ...player, teamId, teamName }, playerType: "hitter", score, features, date }));
+          for (const score of scoreHitter(features, player.fullName)) {
+            const prediction = buildPrediction({ game, player: { ...player, teamId, teamName }, playerType: "hitter", score, features, date });
+            const key = predictionDedupKey(prediction);
+            const existing = predictionsByKey.get(key);
+            predictionsByKey.set(key, existing ? chooseHigherRankedPrediction(prediction, existing) : prediction);
+          }
         } catch (error) { excluded.push({ game_date: date, player_id: player.id, player_name: player.fullName, reason: `Error: ${error.message}` }); }
       }
       const pitcherId = home ? game.home_probable_pitcher_id : game.away_probable_pitcher_id;
@@ -41,11 +63,20 @@ export async function runAnalysis(dateArg, onProgress) {
         const data = await api.pitcher(pitcherId, season, opponentTeamId);
         if (!data.season) continue;
         const features = buildPitcherFeatures(data);
-        for (const score of scorePitcher(features, pitcherName)) predictions.push(buildPrediction({ game, player: { id: pitcherId, fullName: pitcherName, teamId, teamName }, playerType: "pitcher", score, features, date }));
+        for (const score of scorePitcher(features, pitcherName)) {
+          const prediction = buildPrediction({ game, player: { id: pitcherId, fullName: pitcherName, teamId, teamName }, playerType: "pitcher", score, features, date });
+          const key = predictionDedupKey(prediction);
+          const existing = predictionsByKey.get(key);
+          predictionsByKey.set(key, existing ? chooseHigherRankedPrediction(prediction, existing) : prediction);
+        }
       } catch (error) { excluded.push({ game_date: date, player_id: pitcherId, player_name: pitcherName, reason: `Error: ${error.message}` }); }
     }
   }
+  const predictions = Array.from(predictionsByKey.values());
   log(`Saving ${predictions.length} predictions...`);
+  await db.entities.Prediction.deleteMany({ game_date: date });
+  await db.entities.ExcludedPlayer.deleteMany({ game_date: date });
+  await db.entities.Game.deleteMany({ game_date: date });
   await db.entities.Game.bulkCreate(games);
   if (predictions.length) await db.entities.Prediction.bulkCreate(predictions);
   if (excluded.length) await db.entities.ExcludedPlayer.bulkCreate(excluded);
